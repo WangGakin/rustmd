@@ -238,7 +238,7 @@ impl BufferContent {
     }
 
     fn apply_edit(&mut self, offset: usize, to_delete: &str, to_insert: &str) {
-        let delete_len = to_delete.len();
+        let delete_len = to_delete.len().min(self.text.len_bytes().saturating_sub(offset));
         let insert_len = to_insert.len();
 
         // Build the edit description for tree-sitter before modifying the rope
@@ -582,8 +582,12 @@ impl BufferContent {
     }
 
     fn slice(&self, range: Range<usize>) -> String {
-        let char_start = self.text.byte_to_char(range.start);
-        let char_end = self.text.byte_to_char(range.end);
+        let len = self.text.len_bytes();
+        let start = range.start.min(len);
+        let end = range.end.min(len);
+        if start >= end { return String::new(); }
+        let char_start = self.text.byte_to_char(start);
+        let char_end = self.text.byte_to_char(end);
         self.text.slice(char_start..char_end).to_string()
     }
 
@@ -712,6 +716,11 @@ impl Buffer {
     }
 
     pub fn delete(&mut self, byte_range: Range<usize>, cursor_before: usize) -> usize {
+        let rope_len = self.content.text.len_bytes();
+        let start = byte_range.start.min(rope_len);
+        let end = byte_range.end.min(rope_len);
+        let byte_range = start..end;
+        if byte_range.is_empty() { return cursor_before; }
         let deleted = self.content.slice(byte_range.clone());
         let cursor_after = byte_range.start;
         let edit = TextEdit::new(
@@ -725,7 +734,15 @@ impl Buffer {
     }
 
     pub fn replace(&mut self, byte_range: Range<usize>, text: &str, cursor_before: usize) -> usize {
-        let deleted = self.content.slice(byte_range.clone());
+        let rope_len = self.content.text.len_bytes();
+        let start = byte_range.start.min(rope_len);
+        let end = byte_range.end.min(rope_len);
+        let byte_range = start..end;
+        let deleted = if !byte_range.is_empty() {
+            self.content.slice(byte_range.clone())
+        } else {
+            String::new()
+        };
         let cursor_after = byte_range.start + text.len();
         let edit = TextEdit::new(
             byte_range.start,
