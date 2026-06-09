@@ -12,7 +12,8 @@ pub fn content_from_file(path: &str) -> String {
 }
 
 fn byte_to_utf16(s: &str, byte_offset: usize) -> usize {
-    s[..byte_offset].encode_utf16().count()
+    let offset = byte_offset.min(s.len());
+    s[..offset].encode_utf16().count()
 }
 
 fn utf16_to_byte(s: &str, utf16_offset: usize) -> usize {
@@ -30,6 +31,7 @@ impl EntityInputHandler for Editor {
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
         let offset = self.state.cursor().offset;
         let full = self.state.buffer.text();
+        let offset = offset.min(full.len());
         let u = byte_to_utf16(&full, offset);
         Some(UTF16Selection { range: u..u, reversed: false })
     }
@@ -37,7 +39,9 @@ impl EntityInputHandler for Editor {
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         if let Some(ref mark) = self.ime_marked_range {
             let full = self.state.buffer.text();
-            Some(byte_to_utf16(&full, mark.start)..byte_to_utf16(&full, mark.end))
+            let s = mark.start.min(full.len());
+            let e = mark.end.min(full.len());
+            Some(byte_to_utf16(&full, s)..byte_to_utf16(&full, e))
         } else {
             None
         }

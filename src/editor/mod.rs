@@ -385,7 +385,8 @@ impl EditorState {
         let line_start = cursor.move_to_line_start(&self.buffer).offset;
 
         if cursor.offset == line_start || self.cursor_at_blockquote_content_start() {
-            return false;
+            self.insert_text(" ");
+            return true;
         }
 
         self.insert_text(" ");
