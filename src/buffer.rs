@@ -473,14 +473,21 @@ impl BufferContent {
     }
 
     /// Get a single byte at the given offset, if it exists.
+    /// Unlike ropey's byte_slice, this works at any byte offset, even
+    /// in the middle of multi-byte characters.
     pub fn byte_at(&self, offset: usize) -> Option<u8> {
         if offset >= self.text.len_bytes() {
             return None;
         }
-        self.text
-            .byte_slice(offset..offset + 1)
-            .as_str()
-            .and_then(|s| s.bytes().next())
+        let char_idx = self.byte_to_char_safe(offset);
+        if char_idx >= self.text.len_chars() {
+            return None;
+        }
+        let char_start = self.text.char_to_byte(char_idx);
+        let rel = offset.saturating_sub(char_start);
+        let c = self.text.char(char_idx);
+        let mut buf = [0u8; 4];
+        c.encode_utf8(&mut buf).as_bytes().get(rel).copied()
     }
 
     pub fn rope(&self) -> &Rope {
@@ -548,6 +555,32 @@ impl BufferContent {
     pub fn byte_to_line(&self, byte_offset: usize) -> usize {
         let char_offset = self.byte_to_char_safe(byte_offset);
         self.text.char_to_line(char_offset)
+    }
+
+    pub fn prev_char_boundary(&self, offset: usize) -> usize {
+        let offset = offset.min(self.text.len_bytes());
+        if offset == 0 {
+            return 0;
+        }
+        let char_idx = self.byte_to_char_safe(offset);
+        if char_idx == 0 {
+            return 0;
+        }
+        self.text.char_to_byte(char_idx - 1)
+    }
+
+    pub fn next_char_boundary(&self, offset: usize) -> usize {
+        let offset = offset.min(self.text.len_bytes());
+        if offset >= self.text.len_bytes() {
+            return self.text.len_bytes();
+        }
+        let char_idx = self.byte_to_char_safe(offset);
+        let next_char = char_idx + 1;
+        let len_chars = self.text.len_chars();
+        if next_char >= len_chars {
+            return self.text.len_bytes();
+        }
+        self.text.char_to_byte(next_char)
     }
 
     pub fn line_to_byte(&self, line: usize) -> usize {

@@ -69,9 +69,35 @@ impl EntityInputHandler for Editor {
         }
 
         // ── No composition ──
-        // writ's on_key_down already inserted the text from KeyDown events.
-        // WM_CHAR arriving here is a duplicate — skip it.
+        // writ's on_key_down already inserted ASCII chars from KeyDown events.
+        // WM_CHAR for ASCII is a duplicate — skip it.
+        // Non-ASCII text (e.g. Chinese punctuation via WM_CHAR/WM_IME_CHAR)
+        // was NOT inserted by on_key_down, so accept it here.
         if replacement.is_none() {
+            // ASCII alpha/digit — already handled by on_key_down, skip duplicate
+            if text.len() == 1 && text.as_bytes()[0].is_ascii_alphanumeric() {
+                return;
+            }
+            // ASCII punct — same as above, on_key_down already inserted
+            if text.len() == 1 && text.as_bytes()[0].is_ascii() {
+                return;
+            }
+            // Non-ASCII text (e.g. Chinese punctuation)
+            let mut cursor = self.state.cursor().offset;
+            // on_key_down may have inserted the raw ASCII key before the
+            // IME event arrived (e.g. ',' before '，'). Remove it.
+            if cursor > 0 {
+                let prev = self.state.buffer.byte_at(cursor - 1);
+                if prev.is_some_and(|b| b.is_ascii_punctuation()) {
+                    let prev_start = self.state.buffer.prev_char_boundary(cursor);
+                    self.state.buffer.delete(prev_start..cursor, cursor);
+                    cursor = prev_start;
+                }
+            }
+            let new_end = self.state.buffer.insert(cursor, text, cursor);
+            self.state.selection = Selection::new(new_end, new_end);
+            self.sync_list_state(cx);
+            cx.notify();
             return;
         }
 
@@ -117,8 +143,9 @@ impl EntityInputHandler for Editor {
         cx.notify();
     }
 
-    fn unmark_text(&mut self, _w: &mut Window, _cx: &mut Context<Self>) {
+    fn unmark_text(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
         self.ime_marked_range = None;
+        cx.notify();
     }
 
     fn bounds_for_range(&mut self, _r: Range<usize>, eb: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {

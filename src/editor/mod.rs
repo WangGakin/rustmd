@@ -1266,7 +1266,7 @@ impl EditorState {
             return;
         }
 
-        let new_pos = cursor_pos - 1;
+        let new_pos = self.buffer.prev_char_boundary(cursor_pos);
         self.buffer.delete(new_pos..cursor_pos, cursor_pos);
         self.selection = Selection::new(new_pos, new_pos);
         self.propagate_checkbox_after_edit();
@@ -1705,6 +1705,8 @@ pub struct Editor {
     /// Line ranges that are user messages (for chat editor background highlighting).
     /// Each range is start_line..end_line (exclusive).
     user_message_lines: Vec<Range<usize>>,
+    /// Controls cursor blink visibility. Toggled by a background timer.
+    cursor_blink_visible: bool,
 }
 
 impl Editor {
@@ -1720,7 +1722,7 @@ impl Editor {
         let line_count = state.buffer.line_count();
         let list_state = ListState::new(line_count, ListAlignment::Top, px(200.0));
 
-        Self {
+        let editor = Self {
             state,
             focus_handle,
             list_state,
@@ -1756,7 +1758,36 @@ impl Editor {
             diff_state: None,
             pending_agent_write: false,
             user_message_lines: Vec::new(),
-        }
+            cursor_blink_visible: true,
+        };
+
+        editor.start_cursor_blink(cx);
+        editor
+    }
+
+    /// Start a background timer that toggles cursor visibility every 500ms.
+    fn start_cursor_blink(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let _ = cx.update(|cx| {
+                    if let Some(editor) = this.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            editor.cursor_blink_visible = !editor.cursor_blink_visible;
+                            cx.notify();
+                        });
+                    }
+                });
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+            }
+        })
+        .detach();
+    }
+
+    /// Reset blink state — cursor becomes visible and blink cycle restarts.
+    fn reset_cursor_blink(&mut self) {
+        self.cursor_blink_visible = true;
     }
 
     /// Set whether this editor is the primary editor that updates global state.
@@ -3166,6 +3197,7 @@ impl Editor {
         if self.input_blocked {
             return;
         }
+        self.reset_cursor_blink();
 
         let keystroke = &event.keystroke;
 
@@ -3279,6 +3311,11 @@ impl Editor {
                     self.shift_enter();
                 } else {
                     self.enter();
+                }
+            }
+            "space" => {
+                if !self.state.try_insert_space() {
+                    return;
                 }
             }
             "tab" => {
@@ -3532,6 +3569,7 @@ impl Editor {
 
     /// Internal action execution (no input_blocked check).
     fn execute_action(&mut self, action: &EditorAction, cx: &mut Context<Self>) {
+        self.reset_cursor_blink();
         match action {
             EditorAction::Type(c) => {
                 self.insert_text(&c.to_string());
@@ -3610,7 +3648,8 @@ impl Focusable for Editor {
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buffer_version = self.state.buffer.version();
-        if buffer_version != self.last_synced_version {
+        let content_changed = buffer_version != self.last_synced_version;
+        if content_changed {
             self.last_synced_version = buffer_version;
             self.sync_list_state(cx);
         }
@@ -3652,15 +3691,17 @@ impl Render for Editor {
             }
         }
 
-        // Detect GitHub refs and naked URLs in visible lines
-        let (github_matches_by_line, naked_urls_by_line) =
-            self.detect_links(first_visible_line, last_visible_line + 1);
-        self.spawn_github_validation(&github_matches_by_line, cx);
-        self.spawn_naked_url_validation(&naked_urls_by_line, cx);
-
-        // Store refs for autocomplete and atomic cursor movement
-        self.github_refs_by_line = github_matches_by_line.clone();
-        self.naked_urls_by_line = naked_urls_by_line.clone();
+        // Detect GitHub refs and naked URLs in visible lines — only when content changed
+        let (github_matches_by_line, naked_urls_by_line) = if content_changed {
+            let (gh, nu) = self.detect_links(first_visible_line, last_visible_line + 1);
+            self.spawn_github_validation(&gh, cx);
+            self.spawn_naked_url_validation(&nu, cx);
+            self.github_refs_by_line = gh.clone();
+            self.naked_urls_by_line = nu.clone();
+            (gh, nu)
+        } else {
+            (self.github_refs_by_line.clone(), self.naked_urls_by_line.clone())
+        };
 
         // Update autocomplete only when cursor position changed (not on every render)
         let cursor_offset_changed = self.last_cursor_offset != Some(cursor_offset);
@@ -3749,7 +3790,7 @@ impl Render for Editor {
 
         // Only show cursor and selection when this editor is focused and input is not blocked
         let is_focused = self.focus_handle.is_focused(window);
-        let show_cursor = is_focused && !self.input_blocked;
+        let show_cursor = is_focused && !self.input_blocked && self.cursor_blink_visible;
         let cursor_offset = self.state.selection.head;
         let selection_range = if show_cursor && !self.state.selection.is_collapsed() {
             Some(self.state.selection.range())
