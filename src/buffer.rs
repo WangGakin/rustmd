@@ -237,7 +237,17 @@ impl BufferContent {
         });
     }
 
+    /// Safe wrapper around Rope::byte_to_char — clamps to valid range.
+    fn byte_to_char_safe(&self, byte_offset: usize) -> usize {
+        let len = self.text.len_bytes();
+        if byte_offset >= len {
+            return self.text.len_chars();
+        }
+        self.text.byte_to_char(byte_offset)
+    }
+
     fn apply_edit(&mut self, offset: usize, to_delete: &str, to_insert: &str) {
+        let offset = offset.min(self.text.len_bytes());
         let delete_len = to_delete.len().min(self.text.len_bytes().saturating_sub(offset));
         let insert_len = to_insert.len();
 
@@ -265,12 +275,12 @@ impl BufferContent {
         };
 
         if delete_len > 0 {
-            let char_start = self.text.byte_to_char(offset);
-            let char_end = self.text.byte_to_char(offset + delete_len);
+            let char_start = self.byte_to_char_safe(offset);
+            let char_end = self.byte_to_char_safe(offset + delete_len);
             self.text.remove(char_start..char_end);
         }
         if insert_len > 0 {
-            let char_offset = self.text.byte_to_char(offset);
+            let char_offset = self.byte_to_char_safe(offset);
             self.text.insert(char_offset, to_insert);
         }
 
@@ -306,11 +316,11 @@ impl BufferContent {
                 format!("{}. ", correct_number)
             };
 
-            let char_start = self.text.byte_to_char(marker_range.start);
-            let char_end = self.text.byte_to_char(marker_range.end);
+            let char_start = self.byte_to_char_safe(marker_range.start);
+            let char_end = self.byte_to_char_safe(marker_range.end);
             self.text.remove(char_start..char_end);
 
-            let char_offset = self.text.byte_to_char(marker_range.start);
+            let char_offset = self.byte_to_char_safe(marker_range.start);
             self.text.insert(char_offset, &new_marker);
         }
 
@@ -393,8 +403,8 @@ impl BufferContent {
                 let is_parenthesis = marker.kind() == "list_marker_parenthesis";
 
                 // Extract digits from the marker using rope slice
-                let char_start = self.text.byte_to_char(start);
-                let char_end = self.text.byte_to_char(end);
+                let char_start = self.byte_to_char_safe(start);
+                let char_end = self.byte_to_char_safe(end);
                 let slice = self.text.slice(char_start..char_end);
 
                 let number: usize = slice
@@ -412,7 +422,7 @@ impl BufferContent {
 
     fn byte_to_point(&self, byte_offset: usize) -> Point {
         let byte_offset = byte_offset.min(self.text.len_bytes());
-        let char_offset = self.text.byte_to_char(byte_offset);
+        let char_offset = self.byte_to_char_safe(byte_offset);
         let line = self.text.char_to_line(char_offset);
         let line_start_char = self.text.line_to_char(line);
         let line_start_byte = self.text.char_to_byte(line_start_char);
@@ -536,7 +546,7 @@ impl BufferContent {
     }
 
     pub fn byte_to_line(&self, byte_offset: usize) -> usize {
-        let char_offset = self.text.byte_to_char(byte_offset);
+        let char_offset = self.byte_to_char_safe(byte_offset);
         self.text.char_to_line(char_offset)
     }
 
@@ -586,8 +596,8 @@ impl BufferContent {
         let start = range.start.min(len);
         let end = range.end.min(len);
         if start >= end { return String::new(); }
-        let char_start = self.text.byte_to_char(start);
-        let char_end = self.text.byte_to_char(end);
+        let char_start = self.byte_to_char_safe(start);
+        let char_end = self.byte_to_char_safe(end);
         self.text.slice(char_start..char_end).to_string()
     }
 
@@ -601,8 +611,8 @@ impl BufferContent {
         if start >= end {
             return std::borrow::Cow::Borrowed("");
         }
-        let char_start = self.text.byte_to_char(start);
-        let char_end = self.text.byte_to_char(end);
+        let char_start = self.byte_to_char_safe(start);
+        let char_end = self.byte_to_char_safe(end);
         let slice = self.text.slice(char_start..char_end);
         match slice.as_str() {
             Some(s) => std::borrow::Cow::Borrowed(s),
@@ -632,11 +642,15 @@ impl BufferContent {
         let highlights = Rc::make_mut(&mut self.code_highlight_cache.highlights);
         highlights.clear();
 
+        let rope = &self.text;
+        let rope_len = rope.len_bytes();
+        let rope_chars = rope.len_chars();
+
         for code_block in &self.parsed.code_blocks {
             let language = code_block.info_string_range.as_ref().and_then(|range| {
-                let char_start = self.text.byte_to_char(range.start);
-                let char_end = self.text.byte_to_char(range.end);
-                let slice = self.text.slice(char_start..char_end);
+                let s = if range.start >= rope_len { rope_chars } else { rope.byte_to_char(range.start) };
+                let e = if range.end >= rope_len { rope_chars } else { rope.byte_to_char(range.end) };
+                let slice = rope.slice(s..e);
                 let lang = slice.to_string().trim().to_string();
                 if lang.is_empty() { None } else { Some(lang) }
             });
@@ -644,9 +658,9 @@ impl BufferContent {
             if let Some(lang) = language
                 && !code_block.content_range.is_empty()
             {
-                let char_start = self.text.byte_to_char(code_block.content_range.start);
-                let char_end = self.text.byte_to_char(code_block.content_range.end);
-                let slice = self.text.slice(char_start..char_end);
+                let s = if code_block.content_range.start >= rope_len { rope_chars } else { rope.byte_to_char(code_block.content_range.start) };
+                let e = if code_block.content_range.end >= rope_len { rope_chars } else { rope.byte_to_char(code_block.content_range.end) };
+                let slice = rope.slice(s..e);
                 let code_content = slice.to_string();
 
                 let mut spans = self.highlighter.highlight(&code_content, &lang);
