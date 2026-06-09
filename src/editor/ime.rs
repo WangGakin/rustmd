@@ -51,35 +51,37 @@ impl EntityInputHandler for Editor {
     }
 
     fn replace_text_in_range(&mut self, replacement: Option<Range<usize>>, text: &str, _w: &mut Window, cx: &mut Context<Self>) {
-        let full = self.state.buffer.text();
-
-        // Stray WM_CHAR during IME composition → discard
+        // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
-            let is_ascii = text.len() == 1 && text.as_bytes()[0].is_ascii_alphabetic();
-            if is_ascii || text.is_empty() { return; }
+            let ascii = text.len() == 1 && text.as_bytes()[0].is_ascii_alphabetic();
+            if ascii || text.is_empty() { return; }
             // IME confirmation: replace composition text
             let mark = self.ime_marked_range.take().unwrap();
             let new_end = self.state.buffer.replace(mark.clone(), text, mark.start);
-            self.ime_marked_range = None;
             self.state.selection = Selection::new(new_end, new_end);
             self.sync_list_state(cx);
             cx.notify();
             return;
         }
 
-        self.ime_marked_range = None;
+        // ── No composition ──
+        // writ's on_key_down already inserted the text from KeyDown events.
+        // WM_CHAR arriving here is a duplicate — skip it.
+        if replacement.is_none() {
+            return;
+        }
+
+        // Explicit replacement range (rare for WM_CHAR)
         if let Some(r) = replacement {
+            self.ime_marked_range = None;
+            let full = self.state.buffer.text();
             let a = utf16_to_byte(&full, r.start);
             let b = utf16_to_byte(&full, r.end);
             let new_end = self.state.buffer.replace(a..b, text, a);
             self.state.selection = Selection::new(new_end, new_end);
-        } else {
-            let offset = self.state.cursor().offset;
-            let new_end = self.state.buffer.insert(offset, text, offset);
-            self.state.selection = Selection::new(new_end, new_end);
+            self.sync_list_state(cx);
+            cx.notify();
         }
-        self.sync_list_state(cx);
-        cx.notify();
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, _w: &mut Window, cx: &mut Context<Self>) {
@@ -87,21 +89,20 @@ impl EntityInputHandler for Editor {
         let new_len = new.len();
         if new_len == 0 { return; }
 
+        let cursor = self.state.cursor().offset;
+
         let (from, to) = if let Some(r) = range {
             (utf16_to_byte(&full, r.start), utf16_to_byte(&full, r.end))
         } else if let Some(mark) = self.ime_marked_range.clone() {
-            (mark.start, mark.end)
+            // writ's on_key_down may have inserted extra text AFTER the previous
+            // composition range (e.g. pinyin "a" after "d"). Expand the replace
+            // region to cover everything up to the current cursor.
+            (mark.start, cursor.max(mark.end))
         } else {
-            // First composition — WM_CHAR may have already inserted pinyin.
-            // Check if text before cursor matches and replace if so.
-            let cursor = self.state.cursor().offset;
+            // First composition char — writ already inserted it via key handler.
+            // Replace what writ inserted with the (same) composition text.
             let before = cursor.saturating_sub(new_len);
-            let slice = self.state.buffer.slice_cow(before..cursor);
-            if slice.as_ref() == new {
-                (before, cursor)
-            } else {
-                (cursor, cursor)
-            }
+            (before, cursor)
         };
 
         self.ime_marked_range = None;

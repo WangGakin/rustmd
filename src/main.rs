@@ -47,7 +47,7 @@ fn main() {
             },
             |_window, cx| {
                 let editor = cx.new(|cx| Editor::new(&content, cx));
-                cx.new(|cx| RootView { editor })
+                cx.new(|_cx| RootView { editor })
             },
         )
         .unwrap();
