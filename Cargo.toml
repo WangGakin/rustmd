@@ -1,6 +1,6 @@
 [package]
 name = "rustmd"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [lib]
@@ -40,6 +40,9 @@ rustls = { version = "0.23", features = ["ring"] }
 gix = { version = "0.77", default-features = false }
 agent-client-protocol = "0.9"
 async-process = "2.5.0"
+rfd = "0.15"
+windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse"] }
+raw-window-handle = "0.6"
 
 [features]
 default = ["gpui/default"]

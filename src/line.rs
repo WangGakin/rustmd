@@ -202,6 +202,10 @@ pub struct Line {
     inline_highlight_ranges: Vec<Range<usize>>,
     /// Color for inline highlight ranges.
     inline_highlight_color: Option<Rgba>,
+    /// Whether to visually render the cursor (controlled by blink timer).
+    /// Separate from cursor_offset, which is always the real position used
+    /// for editing-mode detection (showing/hiding markdown markers).
+    show_cursor: bool,
 }
 
 impl Line {
@@ -222,6 +226,7 @@ impl Line {
         line_background: Option<Rgba>,
         inline_highlight_ranges: Vec<Range<usize>>,
         inline_highlight_color: Option<Rgba>,
+        show_cursor: bool,
     ) -> Self {
         let substitution = {
             let s = line.substitution_rope(&rope);
@@ -246,6 +251,7 @@ impl Line {
             line_background,
             inline_highlight_ranges,
             inline_highlight_color,
+            show_cursor,
         }
     }
 
@@ -983,6 +989,9 @@ impl Line {
     }
 
     fn compute_visual_cursor_pos(&self, display_text: &str) -> Option<usize> {
+        if !self.show_cursor {
+            return None;
+        }
         if !self.cursor_on_line() {
             return None;
         }

@@ -1,10 +1,15 @@
 use gpui::{Action, App, ElementId, Fill, Global, MouseButton, ReadGlobal, div, prelude::*, rems};
+use raw_window_handle::RawWindowHandle;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, HTCAPTION, WM_NCLBUTTONDOWN};
 
 use crate::editor::EditorTheme;
+use crate::menu;
 use crate::window::{CloseWindow, MinimizeWindow, ZoomWindow};
 
 pub struct FileInfo {
-    pub path: std::path::PathBuf,
+    pub path: Option<std::path::PathBuf>,
     pub dirty: bool,
 }
 
@@ -34,12 +39,13 @@ fn traffic_light(
 
 pub fn title_bar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
     let file_info = FileInfo::global(cx);
-    let file_name = file_info
-        .path
-        .file_name()
-        .expect("file name")
-        .display()
-        .to_string();
+    let file_name = match &file_info.path {
+        Some(path) => path
+            .file_name()
+            .map(|n| n.display().to_string())
+            .unwrap_or_else(|| "untitled".to_string()),
+        None => "untitled".to_string(),
+    };
     let title = if file_info.dirty {
         format!("* {}", file_name)
     } else {
@@ -59,29 +65,47 @@ pub fn title_bar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
             div()
                 .flex_1()
                 .min_w_0()
-                .relative()
-                .on_mouse_down(MouseButton::Left, |_e, window, _| {
-                    window.start_window_move();
-                })
-                // Invisible spacer to give height
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(rems(1.0))
+                .child(menu::toolbar(theme, cx))
                 .child(
                     div()
-                        .whitespace_nowrap()
-                        .overflow_hidden()
-                        .invisible()
-                        .child(title.clone()),
-                )
-                // Actual text with ellipsis
-                .child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .top_0()
-                        .bottom_0()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .child(title),
+                        .flex_1()
+                        .min_w_0()
+                        .relative()
+                        .on_mouse_down(MouseButton::Left, |_e, window, _cx| {
+                            if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
+                                if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                                    unsafe {
+                                        let hwnd = HWND(win32_handle.hwnd.get() as _);
+                                        let _ = ReleaseCapture();
+                                        let _ = SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as _)), Some(LPARAM(0)));
+                                    }
+                                }
+                            }
+                        })
+                        // Invisible spacer to give height
+                        .child(
+                            div()
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .invisible()
+                                .child(title.clone()),
+                        )
+                        // Actual text with ellipsis
+                        .child(
+                            div()
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top_0()
+                                .bottom_0()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(title),
+                        ),
                 ),
         )
         .child(

@@ -51,6 +51,7 @@ use crate::inline::{
 };
 use crate::line::{Line, LineTheme};
 use crate::paste::{PasteContext, transform_paste};
+use crate::key_mode::KeyMode;
 
 /// Context about the line at the cursor, used by smart editing actions.
 pub struct LineContext {
@@ -1767,16 +1768,22 @@ impl Editor {
 
     /// Start a background timer that toggles cursor visibility every 500ms.
     fn start_cursor_blink(&self, cx: &mut Context<Self>) {
+        let windows = cx.windows();
+        let window = windows.first().cloned();
         cx.spawn(async move |this, cx| {
             loop {
-                let _ = cx.update(|cx| {
-                    if let Some(editor) = this.upgrade() {
-                        editor.update(cx, |editor, cx| {
-                            editor.cursor_blink_visible = !editor.cursor_blink_visible;
-                            cx.notify();
+                if !crate::file_ops::is_dialog_open() {
+                    if let Some(window) = window.clone() {
+                        let _ = cx.update_window(window, |_, _window, cx| {
+                            if let Some(editor) = this.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.cursor_blink_visible = !editor.cursor_blink_visible;
+                                    cx.notify();
+                                });
+                            }
                         });
                     }
-                });
+                }
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(500))
                     .await;
@@ -2050,28 +2057,34 @@ impl Editor {
 
         let client = client.clone();
         let ref_for_task = reference.clone();
+        let window = cx.windows().first().cloned();
         cx.spawn(async move |weak, cx| {
             let result = client.validate_ref(&ref_for_task).await;
-            let _ = cx.update(|cx| {
-                if let Some(editor) = weak.upgrade() {
-                    editor.update(cx, |editor, cx| {
-                        match result {
-                            crate::github::ValidationResult::ValidWithData(data) => {
-                                editor
-                                    .github_validation_cache
-                                    .set_valid(ref_for_task, Some(data));
+            if crate::file_ops::is_dialog_open() {
+                return;
+            }
+            if let Some(window) = window {
+                let _ = cx.update_window(window, |_, _window, cx| {
+                    if let Some(editor) = weak.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            match result {
+                                crate::github::ValidationResult::ValidWithData(data) => {
+                                    editor
+                                        .github_validation_cache
+                                        .set_valid(ref_for_task, Some(data));
+                                }
+                                crate::github::ValidationResult::ValidNoData => {
+                                    editor.github_validation_cache.set_valid(ref_for_task, None);
+                                }
+                                crate::github::ValidationResult::Invalid => {
+                                    editor.github_validation_cache.set_invalid(ref_for_task);
+                                }
                             }
-                            crate::github::ValidationResult::ValidNoData => {
-                                editor.github_validation_cache.set_valid(ref_for_task, None);
-                            }
-                            crate::github::ValidationResult::Invalid => {
-                                editor.github_validation_cache.set_invalid(ref_for_task);
-                            }
-                        }
-                        cx.notify();
-                    });
-                }
-            });
+                            cx.notify();
+                        });
+                    }
+                });
+            }
         })
         .detach();
     }
@@ -2083,20 +2096,28 @@ impl Editor {
         self.autocomplete_debounce_task = None;
 
         // Spawn a new debounced fetch
+        let window = cx.windows().first().cloned();
         let task = cx.spawn(async move |weak, cx| {
             // Wait for debounce delay (150ms)
             cx.background_executor()
                 .timer(std::time::Duration::from_millis(150))
                 .await;
 
+            // Skip if dialog is open to avoid RefCell panic
+            if crate::file_ops::is_dialog_open() {
+                return;
+            }
+
             // Now do the actual fetch
-            let _ = cx.update(|cx| {
-                if let Some(editor) = weak.upgrade() {
-                    editor.update(cx, |editor, cx| {
-                        editor.fetch_autocomplete_suggestions(cx);
-                    });
-                }
-            });
+            if let Some(window) = window {
+                let _ = cx.update_window(window, |_, _window, cx| {
+                    if let Some(editor) = weak.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            editor.fetch_autocomplete_suggestions(cx);
+                        });
+                    }
+                });
+            }
         });
 
         self.autocomplete_debounce_task = Some(task);
@@ -2142,10 +2163,16 @@ impl Editor {
             ac.fetched_prefix = Some(prefix.clone());
         }
 
+        let window = cx.windows().first().cloned();
         cx.spawn(async move |weak, cx| {
             let issues = client
                 .issues_matching_prefix(&owner, &repo, &prefix, 5)
                 .await;
+
+            // Skip if dialog is open to avoid RefCell panic
+            if crate::file_ops::is_dialog_open() {
+                return;
+            }
 
             // Build suggestions and keep full issue data for caching
             let suggestions_with_data: Vec<(AutocompleteSuggestion, IssueOrPr)> = issues
@@ -2161,65 +2188,67 @@ impl Editor {
                 })
                 .collect();
 
-            let _ = cx.update(|cx| {
-                if let Some(editor) = weak.upgrade() {
-                    editor.update(cx, |editor, cx| {
-                        // Add fetched issues to validation cache with full data
-                        for (_, issue) in &suggestions_with_data {
-                            let github_ref = GitHubRef::Issue {
-                                owner: owner.clone(),
-                                repo: repo.clone(),
-                                number: issue.number,
-                            };
-                            editor.github_validation_cache.set_valid(
-                                github_ref,
-                                Some(crate::github::ValidatedRefData::Issue(issue.clone())),
-                            );
-                        }
-
-                        let suggestions: Vec<_> = suggestions_with_data
-                            .into_iter()
-                            .map(|(s, _)| s)
-                            .collect();
-
-                        // Only update if autocomplete is still active with the same prefix
-                        if let Some(ref mut ac) = editor.autocomplete
-                            && ac.trigger == AutocompleteTrigger::Issue
-                            && ac.prefix == prefix
-                        {
-                            // Check if user's current input is a known valid issue
-                            let mut final_suggestions = Vec::new();
-                            if let Ok(num) = prefix.parse::<u64>() {
-                                let user_ref = GitHubRef::Issue {
+            if let Some(window) = window {
+                let _ = cx.update_window(window, |_, _window, cx| {
+                    if let Some(editor) = weak.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            // Add fetched issues to validation cache with full data
+                            for (_, issue) in &suggestions_with_data {
+                                let github_ref = GitHubRef::Issue {
                                     owner: owner.clone(),
                                     repo: repo.clone(),
-                                    number: num,
+                                    number: issue.number,
                                 };
-                                if let Some(crate::github::ValidationState::Valid(Some(
-                                    crate::github::ValidatedRefData::Issue(issue),
-                                ))) = editor.github_validation_cache.get(&user_ref)
-                                {
-                                    // Don't add if it's already in the suggestions
-                                    if !suggestions.iter().any(|s| matches!(s, AutocompleteSuggestion::IssueOrPr { number: n, .. } if *n == num)) {
-                                        final_suggestions.push(AutocompleteSuggestion::IssueOrPr {
-                                            number: num,
-                                            symbol: issue.symbol().to_string(),
-                                            status: issue.status(),
-                                            display_snapshot: render_snapshot_for_title(&issue.title),
-                                        });
+                                editor.github_validation_cache.set_valid(
+                                    github_ref,
+                                    Some(crate::github::ValidatedRefData::Issue(issue.clone())),
+                                );
+                            }
+
+                            let suggestions: Vec<_> = suggestions_with_data
+                                .into_iter()
+                                .map(|(s, _)| s)
+                                .collect();
+
+                            // Only update if autocomplete is still active with the same prefix
+                            if let Some(ref mut ac) = editor.autocomplete
+                                && ac.trigger == AutocompleteTrigger::Issue
+                                && ac.prefix == prefix
+                            {
+                                // Check if user's current input is a known valid issue
+                                let mut final_suggestions = Vec::new();
+                                if let Ok(num) = prefix.parse::<u64>() {
+                                    let user_ref = GitHubRef::Issue {
+                                        owner: owner.clone(),
+                                        repo: repo.clone(),
+                                        number: num,
+                                    };
+                                    if let Some(crate::github::ValidationState::Valid(Some(
+                                        crate::github::ValidatedRefData::Issue(issue),
+                                    ))) = editor.github_validation_cache.get(&user_ref)
+                                    {
+                                        // Don't add if it's already in the suggestions
+                                        if !suggestions.iter().any(|s| matches!(s, AutocompleteSuggestion::IssueOrPr { number: n, .. } if *n == num)) {
+                                            final_suggestions.push(AutocompleteSuggestion::IssueOrPr {
+                                                number: num,
+                                                symbol: issue.symbol().to_string(),
+                                                status: issue.status(),
+                                                display_snapshot: render_snapshot_for_title(&issue.title),
+                                            });
+                                        }
                                     }
                                 }
-                            }
-                            final_suggestions.extend(suggestions.clone());
+                                final_suggestions.extend(suggestions.clone());
 
-                            ac.suggestions = final_suggestions;
-                            ac.loading = false;
-                            ac.selected_index = 0;
-                            cx.notify();
-                        }
-                    });
-                }
-            });
+                                ac.suggestions = final_suggestions;
+                                ac.loading = false;
+                                ac.selected_index = 0;
+                                cx.notify();
+                            }
+                        });
+                    }
+                });
+            }
         })
         .detach();
     }
@@ -2239,10 +2268,16 @@ impl Editor {
             ac.fetched_prefix = Some(prefix.clone());
         }
 
+        let window = cx.windows().first().cloned();
         cx.spawn(async move |weak, cx| {
             let users = client
                 .users_matching_prefix(&owner, &repo, &prefix, 5)
                 .await;
+
+            // Skip if dialog is open to avoid RefCell panic
+            if crate::file_ops::is_dialog_open() {
+                return;
+            }
 
             let suggestions: Vec<AutocompleteSuggestion> = users
                 .into_iter()
@@ -2252,22 +2287,24 @@ impl Editor {
                 })
                 .collect();
 
-            let _ = cx.update(|cx| {
-                if let Some(editor) = weak.upgrade() {
-                    editor.update(cx, |editor, cx| {
-                        // Only update if autocomplete is still active with the same prefix
-                        if let Some(ref mut ac) = editor.autocomplete
-                            && ac.trigger == AutocompleteTrigger::User
-                            && ac.prefix == prefix
-                        {
-                            ac.suggestions = suggestions;
-                            ac.loading = false;
-                            ac.selected_index = 0;
-                            cx.notify();
-                        }
-                    });
-                }
-            });
+            if let Some(window) = window {
+                let _ = cx.update_window(window, |_, _window, cx| {
+                    if let Some(editor) = weak.upgrade() {
+                        editor.update(cx, |editor, cx| {
+                            // Only update if autocomplete is still active with the same prefix
+                            if let Some(ref mut ac) = editor.autocomplete
+                                && ac.trigger == AutocompleteTrigger::User
+                                && ac.prefix == prefix
+                            {
+                                ac.suggestions = suggestions;
+                                ac.loading = false;
+                                ac.selected_index = 0;
+                                cx.notify();
+                            }
+                        });
+                    }
+                });
+            }
         })
         .detach();
     }
@@ -2330,26 +2367,29 @@ impl Editor {
                     .timer(std::time::Duration::from_millis(100))
                     .await;
 
-                let continue_loop = cx
-                    .update(|cx| {
-                        if let Some(editor) = weak.upgrade() {
-                            editor.update(cx, |editor, cx| {
-                                if let Some(rx) = &editor.file_watcher_rx {
-                                    let mut changed = false;
-                                    while rx.try_recv().is_ok() {
-                                        changed = true;
-                                    }
-                                    if changed {
-                                        editor.reload_file(cx);
-                                    }
+                let mut continue_loop = true;
+                    if !crate::file_ops::is_dialog_open() {
+                        continue_loop = cx
+                            .update(|cx| {
+                                if let Some(editor) = weak.upgrade() {
+                                    editor.update(cx, |editor, cx| {
+                                        if let Some(rx) = &editor.file_watcher_rx {
+                                            let mut changed = false;
+                                            while rx.try_recv().is_ok() {
+                                                changed = true;
+                                            }
+                                            if changed {
+                                                editor.reload_file(cx);
+                                            }
+                                        }
+                                    });
+                                    true
+                                } else {
+                                    false
                                 }
-                            });
-                            true
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap_or(false);
+                            })
+                            .unwrap_or(false);
+                    }
 
                 if !continue_loop {
                     break;
@@ -2840,6 +2880,7 @@ impl Editor {
                             None,       // no line background
                             Vec::new(), // no inline highlight ranges
                             None,       // no inline highlight color
+                            false,      // no cursor in popup
                         )
                         .with_prefix(prefix_text, prefix_runs)
                         .truncate(px(484.0))
@@ -3045,6 +3086,7 @@ impl Editor {
                     None,       // no line background
                     Vec::new(), // no inline highlight ranges
                     None,       // no inline highlight color
+                    false,      // no cursor in popup
                 )
                 .with_prefix(prefix_text, prefix_runs)
                 .truncate(px(484.0))
@@ -3166,6 +3208,14 @@ impl Editor {
         self.state.delete_forward();
     }
 
+    fn delete_to_line_end(&mut self) {
+        let cursor_pos = self.cursor().offset;
+        let line_end = self.cursor().move_to_line_end(&self.state.buffer).offset;
+        if cursor_pos < line_end {
+            self.state.buffer.delete(cursor_pos..line_end, cursor_pos);
+        }
+    }
+
     fn enter(&mut self) {
         self.state.enter();
         self.scroll_to_cursor_pending = true;
@@ -3246,6 +3296,65 @@ impl Editor {
         }
 
         let extend = keystroke.modifiers.shift;
+        let is_mac_mode = KeyMode::is_mac(cx);
+        let is_ctrl = keystroke.modifiers.control;
+        let is_ctrl_shift = keystroke.modifiers.control && keystroke.modifiers.shift;
+
+        // Mac mode: Ctrl+letter shortcuts
+        if is_mac_mode && is_ctrl && !keystroke.modifiers.alt {
+            match keystroke.key.as_str() {
+                "a" => {
+                    let new_cursor = self.cursor().move_to_line_start(&self.state.buffer);
+                    self.move_cursor(new_cursor, extend);
+                    self.scroll_to_cursor_pending = true;
+                    cx.notify();
+                    return;
+                }
+                "e" => {
+                    let new_cursor = self.cursor().move_to_line_end(&self.state.buffer);
+                    self.move_cursor(new_cursor, extend);
+                    self.scroll_to_cursor_pending = true;
+                    cx.notify();
+                    return;
+                }
+                "b" => {
+                    self.move_in_direction(Direction::Left, extend);
+                    cx.notify();
+                    return;
+                }
+                "f" => {
+                    self.move_in_direction(Direction::Right, extend);
+                    cx.notify();
+                    return;
+                }
+                "p" => {
+                    self.move_in_direction(Direction::Up, extend);
+                    cx.notify();
+                    return;
+                }
+                "n" if !self.diff_state.is_some() => {
+                    self.move_in_direction(Direction::Down, extend);
+                    cx.notify();
+                    return;
+                }
+                "d" => {
+                    self.delete_forward();
+                    cx.notify();
+                    return;
+                }
+                "h" => {
+                    self.delete_backward();
+                    cx.notify();
+                    return;
+                }
+                "k" => {
+                    self.delete_to_line_end();
+                    cx.notify();
+                    return;
+                }
+                _ => {}
+            }
+        }
 
         match keystroke.key.as_str() {
             // Diff accept: Ctrl+Y (current hunk) or Ctrl+Shift+Y (all hunks)
@@ -3327,7 +3436,9 @@ impl Editor {
                     self.tab();
                 }
             }
-            "a" if keystroke.modifiers.control || keystroke.modifiers.platform => {
+            "a" if (keystroke.modifiers.control || keystroke.modifiers.platform)
+                && (!is_mac_mode || is_ctrl_shift) =>
+            {
                 self.state.selection = Selection::select_all(&self.state.buffer);
             }
             "c" if keystroke.modifiers.control || keystroke.modifiers.platform => {
@@ -3368,9 +3479,6 @@ impl Editor {
                 if let Some(cursor_pos) = self.state.buffer.redo() {
                     self.state.selection = Selection::new(cursor_pos, cursor_pos);
                 }
-            }
-            "s" if keystroke.modifiers.control || keystroke.modifiers.platform => {
-                self.save(cx);
             }
             "r" if keystroke.modifiers.control || keystroke.modifiers.platform => {
                 self.refresh_github_refs(cx);
@@ -3493,10 +3601,14 @@ impl Editor {
         self.state.buffer.mark_clean();
     }
 
-    /// Save the buffer to the file specified in FileInfo.
+    /// Save the buffer to the current file path, or prompt Save As if no path.
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        let file_info = FileInfo::global(cx);
-        let path = file_info.path.clone();
+        if self.file_path.is_none() {
+            self.save_as(cx);
+            return;
+        }
+
+        let path = self.file_path.clone().unwrap();
         let content = self.state.buffer.text();
 
         if let Err(e) = std::fs::write(&path, &content) {
@@ -3505,6 +3617,105 @@ impl Editor {
         }
 
         self.state.buffer.mark_clean();
+        self.last_save_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+        cx.set_global(FileInfo {
+            path: self.file_path.clone(),
+            dirty: false,
+        });
+        cx.notify();
+    }
+
+    /// Save the buffer to a new path chosen via file dialog.
+    pub fn save_as(&mut self, cx: &mut Context<Self>) {
+        let default_name = self
+            .file_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+
+        let Some(path) = crate::file_ops::pick_save_file(default_name.as_deref()) else {
+            return;
+        };
+
+        let content = self.state.buffer.text();
+        if let Err(e) = std::fs::write(&path, &content) {
+            eprintln!("Failed to save file: {}", e);
+            return;
+        }
+
+        self.file_path = Some(path.clone());
+        self.state.buffer.mark_clean();
+        self.last_save_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+
+        if self.file_watcher.is_none() {
+            self.watch_file(path.clone(), cx);
+        }
+
+        cx.set_global(FileInfo {
+            path: self.file_path.clone(),
+            dirty: false,
+        });
+        cx.notify();
+    }
+
+    /// Open a file chosen via file dialog, replacing current content.
+    pub fn open_file(&mut self, cx: &mut Context<Self>) {
+        if self.state.buffer.is_dirty() {
+            match crate::file_ops::confirm_discard() {
+                crate::file_ops::DiscardChoice::Save => self.save(cx),
+                crate::file_ops::DiscardChoice::Cancel => return,
+                crate::file_ops::DiscardChoice::DontSave => {}
+            }
+        }
+
+        let Some(path) = crate::file_ops::pick_open_file() else {
+            return;
+        };
+
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to open file: {}", e);
+                return;
+            }
+        };
+
+        self.file_path = None;
+        self.file_watcher = None;
+        self.file_watcher_rx = None;
+
+        self.set_text(&content, cx);
+        self.state.buffer.mark_clean();
+        self.file_path = Some(path.clone());
+        self.watch_file(path.clone(), cx);
+
+        cx.set_global(FileInfo {
+            path: self.file_path.clone(),
+            dirty: false,
+        });
+        cx.notify();
+    }
+
+    /// Clear the editor to start a new file.
+    pub fn new_file(&mut self, cx: &mut Context<Self>) {
+        if self.state.buffer.is_dirty() {
+            match crate::file_ops::confirm_discard() {
+                crate::file_ops::DiscardChoice::Save => self.save(cx),
+                crate::file_ops::DiscardChoice::Cancel => return,
+                crate::file_ops::DiscardChoice::DontSave => {}
+            }
+        }
+
+        self.file_path = None;
+        self.file_watcher = None;
+        self.file_watcher_rx = None;
+        self.set_text("", cx);
+        self.state.buffer.mark_clean();
+
+        cx.set_global(FileInfo {
+            path: None,
+            dirty: false,
+        });
         cx.notify();
     }
 
@@ -3654,13 +3865,13 @@ impl Render for Editor {
             self.sync_list_state(cx);
         }
 
-        // Only primary editor updates global file info (dirty state for title bar)
         if self.is_primary {
             let file_info = FileInfo::global(cx);
-            if file_info.dirty != self.state.buffer.is_dirty() {
+            let dirty = self.state.buffer.is_dirty();
+            if file_info.path != self.file_path || file_info.dirty != dirty {
                 cx.set_global(FileInfo {
-                    path: file_info.path.clone(),
-                    dirty: self.state.buffer.is_dirty(),
+                    path: self.file_path.clone(),
+                    dirty,
                 });
             }
         }
@@ -3790,15 +4001,20 @@ impl Render for Editor {
 
         // Only show cursor and selection when this editor is focused and input is not blocked
         let is_focused = self.focus_handle.is_focused(window);
-        let show_cursor = is_focused && !self.input_blocked && self.cursor_blink_visible;
+        let is_editing = is_focused && !self.input_blocked;
+        // Visual cursor visibility includes blink state (controls whether cursor is drawn)
+        let show_cursor_visual = is_editing && self.cursor_blink_visible;
         let cursor_offset = self.state.selection.head;
-        let selection_range = if show_cursor && !self.state.selection.is_collapsed() {
+        let selection_range = if is_editing && !self.state.selection.is_collapsed() {
             Some(self.state.selection.range())
         } else {
             None
         };
-        // Pass usize::MAX to hide cursor visually when not focused or input blocked
-        let visual_cursor_offset = if show_cursor {
+        // For editing mode detection (showing/hiding markdown markers), use the real
+        // cursor offset when the editor is focused. This prevents flickering caused by
+        // the cursor blink timer toggling between editing and rendered modes.
+        // Only use usize::MAX when the editor is not focused (rendered/read-only mode).
+        let editing_cursor_offset = if is_editing {
             cursor_offset
         } else {
             usize::MAX
@@ -3904,7 +4120,7 @@ impl Render for Editor {
                         if block_input {
                             usize::MAX
                         } else {
-                            visual_cursor_offset
+                            editing_cursor_offset
                         },
                         inline_styles,
                         line_theme_for_list.clone(),
@@ -3922,6 +4138,11 @@ impl Render for Editor {
                         line_background,
                         inline_highlight_ranges,
                         inline_highlight_color,
+                        if block_input {
+                            false
+                        } else {
+                            show_cursor_visual
+                        },
                     )
                 };
 
@@ -4065,6 +4286,54 @@ impl Render for Editor {
             .on_action(cx.listener(
                 |editor: &mut Editor, action: &DispatchEditorAction, _window, cx| {
                     editor.handle_action(&action.0, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |_editor: &mut Editor, _: &crate::file_ops::Save, window, cx| {
+                    crate::file_ops::set_dialog_open(true);
+                    let entity = cx.entity().clone();
+                    window.defer(cx, move |_window, cx| {
+                        entity.update(cx, |editor, cx| {
+                            editor.save(cx);
+                            crate::file_ops::set_dialog_open(false);
+                        });
+                    });
+                },
+            ))
+            .on_action(cx.listener(
+                |_editor: &mut Editor, _: &crate::file_ops::SaveAs, window, cx| {
+                    crate::file_ops::set_dialog_open(true);
+                    let entity = cx.entity().clone();
+                    window.defer(cx, move |_window, cx| {
+                        entity.update(cx, |editor, cx| {
+                            editor.save_as(cx);
+                            crate::file_ops::set_dialog_open(false);
+                        });
+                    });
+                },
+            ))
+            .on_action(cx.listener(
+                |_editor: &mut Editor, _: &crate::file_ops::OpenFile, window, cx| {
+                    crate::file_ops::set_dialog_open(true);
+                    let entity = cx.entity().clone();
+                    window.defer(cx, move |_window, cx| {
+                        entity.update(cx, |editor, cx| {
+                            editor.open_file(cx);
+                            crate::file_ops::set_dialog_open(false);
+                        });
+                    });
+                },
+            ))
+            .on_action(cx.listener(
+                |_editor: &mut Editor, _: &crate::file_ops::NewFile, window, cx| {
+                    crate::file_ops::set_dialog_open(true);
+                    let entity = cx.entity().clone();
+                    window.defer(cx, move |_window, cx| {
+                        entity.update(cx, |editor, cx| {
+                            editor.new_file(cx);
+                            crate::file_ops::set_dialog_open(false);
+                        });
+                    });
                 },
             ))
             // IMPORTANT: Use capture phase to focus this editor BEFORE child elements

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rtk ls *)",
+      "Bash(python \"C:/Users/Benai/rustmd/write_plan.py\")",
+      "Bash(powershell -Command ' *)",
+      "Bash(python -c \"import base64, os; os.makedirs\\(r'C:\\\\Users\\\\Benai\\\\AppData\\\\Roaming\\\\CherryStudio\\\\.claude\\\\plans', exist_ok=True\\); print\\('dir ready'\\)\")"
+    ]
+  }
+}
