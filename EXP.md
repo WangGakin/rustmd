@@ -559,72 +559,115 @@ impl Render for Editor {
 4. **`cx.entity().clone()` 获取 Entity** — 在 `defer` 回调中需要克隆 Entity，因为闭包需要 `'static` 生命周期
 5. **Action handler 中可以直接使用 `window.defer()`** — 比在 `render()` 中检查 pending 标志更简洁可靠
 
-### 2026-06-10（第十批 — Action Handler 中直接使用 defer）
+### 2026-06-10（第十批 — watch_file async loop 缺少 dialog 守卫）
 
-**问题：** 第九批修复在 `render()` 中使用 `window.defer()` 仍然崩溃。
+**问题：** 通过菜单或快捷键触发文件操作后报错 `RefCell already borrowed`。
 
 **根因分析：**
 
-`window.defer()` 在 `render()` 中调用时，回调可能仍在 App 被借用的上下文中执行。因为 `render()` 本身是在 GPUI 的事件处理循环中被调用的，App 的借用贯穿整个事件处理过程。
+之前的批次（第六~九批）已经修复了以下路径的 RefCell panic：
+- cursor blink async task（第六批加 `is_dialog_open()` 守卫）
+- GitHub validation、autocomplete、suggestions 等 async task（第八批改用 `update_window`）
+- Action handler 直接打开对话框（第九/十批改用 `window.defer()`）
+
+但还有一个关键路径遗漏了：`watch_file` 的 async loop。
+
+```
+watch_file (editor/mod.rs:2364)
+  → cx.spawn(async loop)
+    → timer(100ms).await
+    → cx.update(|cx| { ... })   ← 没有 is_dialog_open() 检查！
+```
+
+当 rfd 对话框打开时（嵌套消息循环），`watch_file` 的 timer 触发：
+
+1. 对话框打开 → App 被外层 `update_window` 借用 → `borrow_mut` 未释放
+2. `watch_file` 的 timer 到期 → `cx.update()` 调用 `borrow_mut`
+3. 但 App 仍在步骤 1 的 borrow 中 → `RefCell already borrowed` → panic
+
+其他所有 async task 都已加守卫，但 `watch_file` 是后来新增的，遗漏了。
 
 **修复方案：**
 
-在 action handler 中直接使用 `window.defer()`，而不是在 `render()` 中：
+在 `watch_file` 的 async loop 中添加 `is_dialog_open()` 守卫，与其他 async task 保持一致：
 
 ```rust
-.on_action(cx.listener(
-    |_editor: &mut Editor, _: &crate::file_ops::OpenFile, window, cx| {
-        crate::file_ops::set_dialog_open(true);
-        let entity = cx.entity().clone();
-        window.defer(cx, move |_window, cx| {
-            entity.update(cx, |editor, cx| {
-                editor.open_file(cx);
-                crate::file_ops::set_dialog_open(false);
-            });
-        });
-    },
-))
-```
+loop {
+    timer(100ms).await;
 
-Action handler 执行完毕后，GPUI 的事件处理会返回，App 的借用会释放。然后 `defer` 回调执行时，App 已未被借用，rfd 对话框可以安全创建嵌套消息循环。
+    let mut continue_loop = true;
+    if !crate::file_ops::is_dialog_open() {   // ← 新增
+        continue_loop = cx
+            .update(|cx| {
+                // ... 文件变更检查 ...
+            })
+            .unwrap_or(false);
+    }
+
+    if !continue_loop { break; }
+}
+```
 
 **涉及文件：**
 
 | 文件 | 改动 |
 |------|------|
-| `src/editor/mod.rs` | 移除 `pending_file_op` 字段；4 个 action handler 直接使用 `window.defer()` |
+| `src/editor/mod.rs` | `watch_file` 的 async loop 添加 `is_dialog_open()` 守卫 |
 
 **经验总结：**
 
-1. **`render()` 中的 `defer` 仍可能不安全** — 因为 `render()` 在事件处理循环中被调用，App 的借用贯穿整个过程
-2. **Action handler 中的 `defer` 是安全的** — Action handler 执行完毕后，事件处理会返回，App 的借用会释放
-3. **移除 `pending_file_op` 字段** — 不再需要在 `render()` 中检查 pending 标志，代码更简洁
-4. **`set_dialog_open(true)` 在 `defer` 之前调用** — 确保在对话框打开前设置标志，防止 cursor blink 等 async task 在对话框打开期间尝试访问 App
+1. **新增的 async task 必须添加 dialog 守卫** — 不是所有 async task 都能在创建时预见到所有保护措施，新的 async loop 要沿用现有模式
+2. **`is_dialog_open()` 是防御性方案，不是根治** — 真正的问题是 GPUI 的 `RefCell<App>` 全局借用机制不支持嵌套消息循环
+3. **对话框打开期间的 timer 仍然会触发** — `background_executor().timer()` 不受 rfd 对话框阻塞影响，await 后恢复执行
 
-### 2026-06-10（第十一批 — 关闭前未保存确认 & watch_file RefCell 修复）
 
-**问题 1：** 关闭窗口时直接退出，没有未保存确认。
+### 2026-06-10（第十一批 — 关闭前未保存确认）
 
-**问题 2：** watch_file 的 async loop 调用 `cx.update()` 导致 `RefCell already borrowed` panic。
+**问题：** 关闭窗口时直接退出，没有未保存确认。
 
 **修复方案：**
 
-1. **CloseWindow 拦截** (`src/main.rs`)
-   - `CloseWindow` action handler 中先检查 `editor.is_dirty()`
-   - 有变更时弹出 `confirm_discard()` 对话框（Save / Don't Save / Cancel）
-   - 用 `window.defer()` 推迟对话框操作，避免在 render 中打开模态对话框
-   - `editor.update()` 返回 `bool` 决定是否关闭窗口
+`CloseWindow` action handler 中拦截关闭，检查是否有未保存变更：
 
-2. **watch_file 守卫** (`src/editor/mod.rs`)
-   - 与 cursor blink 相同模式，在 `cx.update()` 前加 `is_dialog_open()` 检查
-   - 对话框打开期间跳过文件变更检查，避免嵌套 borrow
+1. `editor.is_dirty()` 判断是否有变更
+2. 有变更时弹出 `confirm_discard()` 对话框（Save / Don't Save / Cancel）
+3. `editor.update()` 返回 `bool` 决定是否关闭窗口
+4. Save → `!editor.is_dirty()` —— 保存成功才关（SaveAs 取消时保持打开）
+5. Cancel → `false` —— 不关闭
+6. Don't Save → `true` —— 直接关闭
+
+```rust
+.on_action(cx.listener(
+    |this: &mut RootView, _: &CloseWindow, window, cx| {
+        let editor = this.editor.clone();
+        if editor.read(cx).is_dirty() {
+            rustmd::file_ops::set_dialog_open(true);
+            window.defer(cx, move |window, cx| {
+                let should_close = editor.update(cx, |editor, cx| {
+                    match rustmd::file_ops::confirm_discard() {
+                        rustmd::file_ops::DiscardChoice::Save => {
+                            editor.save(cx);
+                            !editor.is_dirty()
+                        }
+                        rustmd::file_ops::DiscardChoice::Cancel => false,
+                        rustmd::file_ops::DiscardChoice::DontSave => true,
+                    }
+                });
+                rustmd::file_ops::set_dialog_open(false);
+                if should_close { window.remove_window(); }
+            });
+        } else {
+            window.remove_window();
+        }
+    },
+))
+```
 
 **涉及文件：**
 
 | 文件 | 改动 |
 |------|------|
 | `src/main.rs` | CloseWindow action handler 添加未保存确认逻辑；使用 `cx.listener()` + `window.defer()` |
-| `src/editor/mod.rs` | watch_file loop 添加 `is_dialog_open()` 守卫 |
 
 **经验总结：**
 
