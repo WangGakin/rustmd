@@ -791,3 +791,49 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 **经验总结：**
 见本章第八节第 13 ~ 16 条。
 
+### 2026-06-12（第十五批 — 多窗口支持 + 图标工具栏 + About 浮层）
+
+**版本：** 0.1.1 → 0.2.0
+
+**功能变更：**
+
+| 功能 | 说明 |
+|------|------|
+| 多窗口 | 工具栏 New Window 按钮 + `Ctrl+Shift+N`，每个窗口独立文档 |
+| 图标工具栏 | 文字按钮改为图标：🦀 📄 📂 💾 │ 🔲 ⌨ |
+| About 浮层 | 🦀 点击弹出版本信息、writ 致谢、Open Config Directory 链接 |
+| 全局点击关闭 | 点击浮层外部任意位置自动关闭 |
+
+**架构重构：**
+
+| 改动 | 说明 |
+|------|------|
+| 移除 3 个 Global trait | `FileInfo`、`StatusBarInfo`、`CursorScreenPosition` 改为 per-window 数据 |
+| RootView 控制布局 | 之前 WindowShadow 内部渲染 title_bar + 编辑器 + status_bar，现在 RootView 直接组装完整布局 |
+| WindowShadow 回归装饰 | 仅保留阴影、圆角、拖拽边框功能 |
+| Editor 存储自有状态 | 新增 `status_info`、`window_handle`、`cursor_screen_pos` 字段 |
+| CursorScreenPosition 共享 | 通过 `Rc<RefCell<>>` 在 Editor 和 Line painting 之间传递 |
+| 窗口 factory | 提取 `open_new_window()` 函数，可从任意 action handler 调用 |
+
+**涉及文件：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/mod.rs` | 新增 `status_info`/`window_handle`/`cursor_screen_pos` 字段；移除全局写入；`start_cursor_blink` 改为 `&mut self`；async task 改用存储的 `window_handle` |
+| `src/line.rs` | `CursorScreenPosition` 移除 `Global` impl；Line 通过 `Rc<RefCell<>>` 写入 cursor 位置 |
+| `src/title_bar.rs` | 接受 `&FileInfo` 参数；移除 `FileInfo::global()` |
+| `src/status_bar.rs` | 接受 `&StatusBarInfo`/`&EditorTheme`/`&Config` 参数；移除全局读取 |
+| `src/window.rs` | WindowShadow 仅保留装饰；新增 `NewWindow` action |
+| `src/main.rs` | RootView 控制完整布局；窗口 factory 函数；`Ctrl+Shift+N` 快捷键；About 浮层 |
+| `src/menu.rs` | 图标工具栏（Unicode）；`ToggleAbout` action |
+| `src/file_ops.rs` | 移除已废弃的 `update_file_info_global`/`update_file_info_from_editor` |
+| `src/user_config.rs` | `config_path()` 改为 `pub` |
+
+**经验总结：**
+
+1. **GPUI `flex_1()` 需要 flex 容器父级** — 移除 title_bar/status_bar 后，WindowShadow 内部不再是 flex 容器，残留的 `flex_1()` 导致编辑区高度塌缩为零。修复：改 `size_full()`
+2. **`div()` 可以被闭包参数遮蔽** — `.when(cond, |div| { ... div() ... })` 中 `div` 参数与 `div()` 函数重名。修复：重命名闭包参数
+3. **`when` 方法需要 `FluentBuilder` trait 在作用域** — `use gpui::*` 不够，需额外 `use gpui::prelude::FluentBuilder`
+4. **全屏遮罩 + 绝对定位 = 全局点击关闭** — 遮罩层（size_full + absolute）覆盖窗口，浮层作为同级后续元素自然在遮罩层之上。点击遮罩关闭，点击浮层正常交互
+5. **`open` crate 可跨平台打开文件/目录** — `open::that(path)` 调用 OS 默认打开方式，Win32 上等价于 `ShellExecuteW("open", path)`
+
