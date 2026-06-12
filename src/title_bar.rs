@@ -1,4 +1,4 @@
-use gpui::{Action, App, ElementId, Fill, Global, MouseButton, ReadGlobal, div, prelude::*, rems};
+use gpui::{Action, App, ElementId, Fill, MouseButton, div, prelude::*, rems};
 use raw_window_handle::RawWindowHandle;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
@@ -12,8 +12,6 @@ pub struct FileInfo {
     pub path: Option<std::path::PathBuf>,
     pub dirty: bool,
 }
-
-impl Global for FileInfo {}
 
 fn traffic_light(
     id: impl Into<ElementId>,
@@ -37,8 +35,7 @@ fn traffic_light(
         })
 }
 
-pub fn title_bar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
-    let file_info = FileInfo::global(cx);
+pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> impl IntoElement {
     let file_name = match &file_info.path {
         Some(path) => path
             .file_name()
