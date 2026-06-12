@@ -1,4 +1,4 @@
-use gpui::{App, Global, ReadGlobal, div, prelude::*, px, rems};
+use gpui::{div, prelude::*, px, rems};
 
 use crate::config::Config;
 use crate::editor::EditorTheme;
@@ -23,13 +23,8 @@ pub struct StatusBarInfo {
     pub last_visible_line: usize,
 }
 
-impl Global for StatusBarInfo {}
-
 /// Render the status bar at the bottom of the editor.
-pub fn status_bar(cx: &App) -> impl IntoElement {
-    let info = StatusBarInfo::global(cx);
-    let theme = EditorTheme::global(cx);
-    let config = Config::global(cx);
+pub fn status_bar(info: &StatusBarInfo, theme: &EditorTheme, config: &Config) -> impl IntoElement {
 
     // Scroll indicator: Top/Bot/All or percentage
     let scroll_str = if info.total_lines <= 1
