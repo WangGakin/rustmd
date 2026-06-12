@@ -154,8 +154,8 @@ impl RenderOnce for WindowShadow {
                     .size_full()
                     .overflow_hidden()
                     .child(
-                        // Content area (RootView now controls title_bar + editor + status_bar layout)
-                        div().flex_1().min_h_0().w_full().children(self.children),
+                        // Content area fills available space — RootView handles internal layout
+                        div().size_full().children(self.children),
                     ),
             )
     }
