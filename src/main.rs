@@ -6,9 +6,8 @@ use rustmd::editor::ime::EditorImeElement;
 use rustmd::editor::{CenterLine, Editor, EditorConfig, EditorTheme};
 use rustmd::file_ops::{NewFile, OpenFile, Save, SaveAs};
 use rustmd::key_mode::KeyMode;
-use rustmd::line::CursorScreenPosition;
-use rustmd::status_bar::StatusBarInfo;
-use rustmd::title_bar::FileInfo;
+use rustmd::status_bar::status_bar;
+use rustmd::title_bar::{title_bar, FileInfo};
 use rustmd::menu::ToggleKeyMode;
 use rustmd::user_config;
 use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, ZoomWindow};
@@ -37,12 +36,6 @@ fn main() {
         };
 
         cx.set_global(config);
-        cx.set_global(CursorScreenPosition::default());
-        cx.set_global(FileInfo {
-            path: initial_path.clone(),
-            dirty: false,
-        });
-        cx.set_global(StatusBarInfo::default());
         cx.set_global(KeyMode::default());
 
         cx.bind_keys([
@@ -98,7 +91,13 @@ fn main() {
                     editor.start_cursor_blink(handle, cx);
                 });
                 window.focus(&editor.read(cx).focus_handle(cx));
-                cx.new(|_cx| RootView { editor })
+                cx.new(|_cx| RootView {
+                    editor,
+                    file_info: FileInfo {
+                        path: initial_path.clone(),
+                        dirty: false,
+                    },
+                })
             },
         )
         .unwrap();
@@ -107,13 +106,21 @@ fn main() {
 
 struct RootView {
     editor: Entity<Editor>,
+    file_info: FileInfo,
 }
 
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = EditorTheme::global(cx).clone();
+        let config = Config::global(cx);
 
-        window_shadow(theme)
+        let editor = self.editor.read(cx);
+        self.file_info.path = editor.file_path().cloned();
+        self.file_info.dirty = editor.is_dirty();
+        let status_info = editor.status_info().clone();
+        drop(editor);
+
+        window_shadow(theme.clone())
             .child(
                 div()
                     .size_full()
@@ -164,17 +171,16 @@ impl Render for RootView {
                         KeyMode::toggle(cx);
                         cx.refresh_windows();
                     })
+                    .flex()
+                    .flex_col()
+                    .child(title_bar(&theme, &self.file_info, cx))
                     .child(
                         div()
-                            .size_full()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .child(EditorImeElement::new(self.editor.clone()))
-                            )
+                            .flex_1()
+                            .min_h_0()
+                            .child(EditorImeElement::new(self.editor.clone())),
                     )
+                    .child(status_bar(&status_info, &theme, config)),
             )
     }
 }
