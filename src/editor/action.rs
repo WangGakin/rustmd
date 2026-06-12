@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use gpui::Action;
 
 /// An action that can be executed on the editor programmatically.
@@ -38,9 +36,7 @@ pub enum EditorAction {
     UpdateHover {
         over_checkbox: bool,
         over_link: bool,
-        /// Byte range of hovered GitHub ref (if any).
-        hovered_github_ref_range: Option<Range<usize>>,
-        /// Screen position of the hovered GitHub ref (for popup positioning).
+        /// Screen position of the hovered ref (for popup positioning).
         hovered_ref_position: Option<gpui::Point<gpui::Pixels>>,
     },
     /// Open a link URL.

@@ -1903,7 +1903,6 @@ impl RenderOnce for Line {
                         Box::new(DispatchEditorAction(EditorAction::UpdateHover {
                             over_checkbox: hovering_checkbox,
                             over_link: hovering_link_region,
-                            hovered_github_ref_range,
                             hovered_ref_position,
                         })),
                         cx,

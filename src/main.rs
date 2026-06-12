@@ -15,7 +15,6 @@ use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, NewWindow, Zoom
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
 
 fn main() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config::parse();
 
