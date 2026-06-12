@@ -32,11 +32,11 @@ pub fn get_toolbar_buttons(cx: &App) -> Vec<ToolbarButton> {
     };
 
     vec![
-        ToolbarButton::new("New", NewFile),
-        ToolbarButton::new("Open", OpenFile),
-        ToolbarButton::new("Save", Save),
-        ToolbarButton::new("New Window", NewWindow),
-        ToolbarButton::new(format!("{} Mode", mode_text), ToggleKeyMode),
+        ToolbarButton::new("\u{1F4C4}", NewFile),   // 📄
+        ToolbarButton::new("\u{1F4C2}", OpenFile),  // 📂
+        ToolbarButton::new("\u{1F4BE}", Save),      // 💾
+        ToolbarButton::new("\u{1F532}", NewWindow), // 🔲
+        ToolbarButton::new(format!("⌨ {}", mode_text), ToggleKeyMode),
     ]
 }
 
@@ -49,9 +49,20 @@ pub fn toolbar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
         let action = button.action;
         let name = button.name.to_string();
 
+        // Separator between Save group and NewWindow
+        if index == 3 {
+            button_elements.push(
+                div()
+                    .px(px(2.0))
+                    .text_color(theme.comment)
+                    .child("\u{2502}")  // │
+                    .into_any_element(),
+            );
+        }
+
         let button_element = div()
             .id(("toolbar-btn", index))
-            .px(px(10.0))
+            .px(px(8.0))
             .py(px(4.0))
             .text_color(theme.foreground)
             .cursor_pointer()
@@ -62,13 +73,13 @@ pub fn toolbar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
                 window.dispatch_action(action.boxed_clone(), cx);
             });
 
-        button_elements.push(button_element);
+        button_elements.push(button_element.into_any_element());
     }
 
     div()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(4.0))
+        .gap(px(2.0))
         .children(button_elements)
 }
