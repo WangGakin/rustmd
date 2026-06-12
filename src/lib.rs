@@ -9,7 +9,7 @@
 //! - **Live inline rendering**: Markdown syntax is hidden when not editing
 //! - **Syntax highlighting**: Code blocks with tree-sitter based highlighting
 //! - **Smart continuation**: Shift+Enter continues lists, blockquotes, etc.
-//! - **Streaming support**: Append text programmatically for real-time output
+//! - **Naked URL detection**: Plain URLs are automatically detected
 //!
 //! # Quick Start
 //!
