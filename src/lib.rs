@@ -9,7 +9,7 @@
 //! - **Live inline rendering**: Markdown syntax is hidden when not editing
 //! - **Syntax highlighting**: Code blocks with tree-sitter based highlighting
 //! - **Smart continuation**: Shift+Enter continues lists, blockquotes, etc.
-//! - **Streaming support**: Append text programmatically for AI chat applications
+//! - **Streaming support**: Append text programmatically for real-time output
 //!
 //! # Quick Start
 //!
@@ -36,11 +36,8 @@
 //! editor.update(cx, |e, cx| e.end_streaming(cx));
 //! ```
 
-pub use agent_view::{AgentView, SubmitPrompt, ToggleChatPanel};
 pub use editor::{Direction, Editor, EditorAction, EditorConfig, EditorTheme};
 
-pub mod acp;
-pub mod agent_view;
 pub mod buffer;
 pub mod config;
 pub mod cursor;
