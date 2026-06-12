@@ -167,7 +167,7 @@ impl Render for RootView {
         self.file_info.path = editor.file_path().cloned();
         self.file_info.dirty = editor.is_dirty();
         let status_info = editor.status_info().clone();
-        drop(editor);
+        let _ = editor;
 
         window_shadow(theme.clone())
             .child(

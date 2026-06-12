@@ -34,7 +34,7 @@ impl ParentElement for WindowShadow {
 }
 
 impl RenderOnce for WindowShadow {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let decorations = window.window_decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
