@@ -2,10 +2,9 @@ use std::path::PathBuf;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use gpui::{ReadGlobal, actions};
+use gpui::actions;
 
 use crate::config::Config;
-use crate::title_bar::FileInfo;
 
 actions!(file, [NewFile, OpenFile, Save, SaveAs]);
 
@@ -85,20 +84,4 @@ pub fn initial_file_path(config: &Config) -> Option<PathBuf> {
     }
 }
 
-pub fn update_file_info_global(path: Option<PathBuf>, dirty: bool, cx: &mut gpui::App) {
-    cx.set_global(FileInfo { path, dirty });
-}
 
-pub fn update_file_info_from_editor(
-    file_path: &Option<PathBuf>,
-    is_dirty: bool,
-    cx: &mut gpui::App,
-) {
-    let file_info = FileInfo::global(cx);
-    if file_info.path != *file_path || file_info.dirty != is_dirty {
-        cx.set_global(FileInfo {
-            path: file_path.clone(),
-            dirty: is_dirty,
-        });
-    }
-}

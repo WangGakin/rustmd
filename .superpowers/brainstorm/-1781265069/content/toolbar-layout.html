@@ -1,0 +1,102 @@
+<h2>工具栏布局方案</h2>
+<p class="subtitle">当前 5 个文字按钮已显拥挤，新增 New Window / RUA / Config 后会更严重</p>
+
+<div class="section">
+  <h3>方案 A：图标工具栏（推荐）</h3>
+  <p class="subtitle">用矢量图标代替文字，紧凑优雅</p>
+  <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">
+    <div style="display:flex;align-items:center;gap:8px;background:#2d2d2d;padding:8px 12px;border-radius:6px">
+      <span title="New" style="font-size:18px;cursor:default">📄</span>
+      <span title="Open" style="font-size:18px;cursor:default">📂</span>
+      <span title="Save" style="font-size:18px;cursor:default">💾</span>
+      <span style="color:#555">│</span>
+      <span title="New Window" style="font-size:18px;cursor:default">🔲</span>
+      <span style="color:#555">│</span>
+      <span title="Key Mode" style="font-size:16px;cursor:default">⌨️ Win</span>
+      <span title="About" style="font-size:18px;cursor:default">ⓘ</span>
+    </div>
+  </div>
+  <div class="pros-cons" style="margin-top:8px">
+    <div class="pros">
+      <h4>优点</h4>
+      <ul>
+        <li>最节省空间，一行放所有按钮</li>
+        <li>视觉清晰，图标直观</li>
+        <li>缩放性好，加新功能不影响布局</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>代价</h4>
+      <ul>
+        <li>需引入图标或使用 Unicode 符号</li>
+        <li>图标需要用户学习成本</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>方案 B：经典菜单栏</h3>
+  <p class="subtitle">File / View / Help 多级菜单，无限扩展</p>
+  <div style="display:flex;gap:16px;margin-top:8px">
+    <div style="display:flex;background:#2d2d2d;padding:6px 12px;border-radius:6px;gap:16px">
+      <span style="font-weight:600">File</span>
+      <span style="font-weight:600">View</span>
+      <span style="font-weight:600">Help</span>
+    </div>
+  </div>
+  <div style="margin-top:4px;padding:8px 16px;background:#1e1e1e;border-radius:6px;border:1px solid #333">
+    <div style="color:#ccc">▸ File: New · Open · Save · Save As · New Window</div>
+    <div style="color:#ccc">▸ View: Key Mode (Win/Mac)</div>
+    <div style="color:#ccc">▸ Help: About (RUA) · Open Config</div>
+  </div>
+  <div class="pros-cons" style="margin-top:8px">
+    <div class="pros">
+      <h4>优点</h4>
+      <ul>
+        <li>最可扩展，未来加任何功能都合理</li>
+        <li>用户熟悉，无需学习</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>代价</h4>
+      <ul>
+        <li>实现复杂度最高（需下拉菜单组件）</li>
+        <li>垂直空间占用更多</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>方案 C：文字按钮 + 更多分隔</h3>
+  <p class="subtitle">保持文字按钮，用逻辑分组和分隔线整理</p>
+  <div style="display:flex;gap:12px;align-items:center;margin-top:8px;background:#2d2d2d;padding:8px 12px;border-radius:6px;flex-wrap:wrap">
+    <span style="cursor:default">New</span>
+    <span style="cursor:default">Open</span>
+    <span style="cursor:default">Save</span>
+    <span style="color:#555">│</span>
+    <span style="cursor:default">New Window</span>
+    <span style="color:#555">│</span>
+    <span style="cursor:default">Win Mode</span>
+    <span style="color:#555">│</span>
+    <span style="cursor:default">About</span>
+  </div>
+  <div class="pros-cons" style="margin-top:8px">
+    <div class="pros">
+      <h4>优点</h4>
+      <ul>
+        <li>改动最小，维持现有风格</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>代价</h4>
+      <ul>
+        <li>随着按钮增多仍然会拥挤</li>
+        <li>10+ 按钮后不可持续</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:16px">打开 <code>http://localhost:51985</code> 查看视觉效果，告诉我你的倾向。</p>

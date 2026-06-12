@@ -40,7 +40,6 @@ impl Render for EmptyDragView {
 use crate::line::CursorScreenPosition;
 use crate::marker::{LineMarkers, MarkerKind, OrderedMarker, UnorderedMarker};
 use crate::status_bar::StatusBarInfo;
-use crate::title_bar::FileInfo;
 
 use crate::buffer::{Buffer, RenderSnapshot};
 use crate::cursor::{Cursor, Selection};
@@ -2069,7 +2068,7 @@ impl Editor {
 
         let client = client.clone();
         let ref_for_task = reference.clone();
-        let window = cx.windows().first().cloned();
+        let window = self.window_handle.clone();
         cx.spawn(async move |weak, cx| {
             let result = client.validate_ref(&ref_for_task).await;
             if crate::file_ops::is_dialog_open() {
@@ -2108,7 +2107,7 @@ impl Editor {
         self.autocomplete_debounce_task = None;
 
         // Spawn a new debounced fetch
-        let window = cx.windows().first().cloned();
+        let window = self.window_handle.clone();
         let task = cx.spawn(async move |weak, cx| {
             // Wait for debounce delay (150ms)
             cx.background_executor()
@@ -2175,7 +2174,7 @@ impl Editor {
             ac.fetched_prefix = Some(prefix.clone());
         }
 
-        let window = cx.windows().first().cloned();
+        let window = self.window_handle.clone();
         cx.spawn(async move |weak, cx| {
             let issues = client
                 .issues_matching_prefix(&owner, &repo, &prefix, 5)
@@ -2280,7 +2279,7 @@ impl Editor {
             ac.fetched_prefix = Some(prefix.clone());
         }
 
-        let window = cx.windows().first().cloned();
+        let window = self.window_handle.clone();
         cx.spawn(async move |weak, cx| {
             let users = client
                 .users_matching_prefix(&owner, &repo, &prefix, 5)
@@ -3646,10 +3645,6 @@ impl Editor {
 
         self.state.buffer.mark_clean();
         self.last_save_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
-        cx.set_global(FileInfo {
-            path: self.file_path.clone(),
-            dirty: false,
-        });
         cx.notify();
     }
 
@@ -3679,10 +3674,6 @@ impl Editor {
             self.watch_file(path.clone(), cx);
         }
 
-        cx.set_global(FileInfo {
-            path: self.file_path.clone(),
-            dirty: false,
-        });
         cx.notify();
     }
 
@@ -3717,10 +3708,6 @@ impl Editor {
         self.file_path = Some(path.clone());
         self.watch_file(path.clone(), cx);
 
-        cx.set_global(FileInfo {
-            path: self.file_path.clone(),
-            dirty: false,
-        });
         cx.notify();
     }
 
@@ -3740,10 +3727,6 @@ impl Editor {
         self.set_text("", cx);
         self.state.buffer.mark_clean();
 
-        cx.set_global(FileInfo {
-            path: None,
-            dirty: false,
-        });
         cx.notify();
     }
 

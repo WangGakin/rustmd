@@ -112,7 +112,7 @@ struct RootView {
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = EditorTheme::global(cx).clone();
-        let config = Config::global(cx);
+        let config = Config::global(cx).clone();
 
         let editor = self.editor.read(cx);
         self.file_info.path = editor.file_path().cloned();
@@ -180,7 +180,7 @@ impl Render for RootView {
                             .min_h_0()
                             .child(EditorImeElement::new(self.editor.clone())),
                     )
-                    .child(status_bar(&status_info, &theme, config)),
+                    .child(status_bar(&status_info, &theme, &config)),
             )
     }
 }
