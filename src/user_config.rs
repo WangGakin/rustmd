@@ -125,7 +125,7 @@ fn to_hex(c: Rgba) -> String {
     format!("#{:02X}{:02X}{:02X}", r, g, b)
 }
 
-fn config_path() -> PathBuf {
+pub fn config_path() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("rustmd")

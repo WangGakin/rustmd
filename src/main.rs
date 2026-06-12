@@ -1,5 +1,6 @@
 use clap::Parser;
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use raw_window_handle::RawWindowHandle;
 use rustmd::config::Config;
 use rustmd::editor::ime::EditorImeElement;
@@ -8,7 +9,7 @@ use rustmd::file_ops::{NewFile, OpenFile, Save, SaveAs};
 use rustmd::key_mode::KeyMode;
 use rustmd::status_bar::status_bar;
 use rustmd::title_bar::{title_bar, FileInfo};
-use rustmd::menu::ToggleKeyMode;
+use rustmd::menu::{ToggleAbout, ToggleKeyMode};
 use rustmd::user_config;
 use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, NewWindow, ZoomWindow};
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
@@ -98,6 +99,7 @@ fn main() {
                         path: initial_path.clone(),
                         dirty: false,
                     },
+                    about_open: false,
                 })
             },
         )
@@ -147,6 +149,7 @@ fn open_new_window(cx: &mut App) {
                     path: None,
                     dirty: false,
                 },
+                about_open: false,
             })
         },
     )
@@ -156,6 +159,7 @@ fn open_new_window(cx: &mut App) {
 struct RootView {
     editor: Entity<Editor>,
     file_info: FileInfo,
+    about_open: bool,
 }
 
 impl Render for RootView {
@@ -223,6 +227,9 @@ impl Render for RootView {
                     .on_action(cx.listener(|_: &mut RootView, _: &NewWindow, _window, cx| {
                         open_new_window(cx);
                     }))
+                    .on_action(cx.listener(|this: &mut RootView, _: &ToggleAbout, _window, _cx| {
+                        this.about_open = !this.about_open;
+                    }))
                     .flex()
                     .flex_col()
                     .child(title_bar(&theme, &self.file_info, cx))
@@ -232,7 +239,58 @@ impl Render for RootView {
                             .min_h_0()
                             .child(EditorImeElement::new(self.editor.clone())),
                     )
-                    .child(status_bar(&status_info, &theme, &config)),
+                    .child(status_bar(&status_info, &theme, &config))
+                    .when(self.about_open, |parent| {
+                        parent
+                            .child(
+                                // Overlay catches clicks outside popover to close it
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .top_0()
+                                    .left_0()
+                                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                        window.dispatch_action(ToggleAbout.boxed_clone(), cx);
+                                    })
+                            )
+                            .child(
+                                // Popover — renders on top of overlay
+                                div()
+                                    .absolute()
+                                    .top(rems(2.5))
+                                    .left(rems(1.5))
+                                    .bg(theme.background)
+                                    .border_1()
+                                    .border_color(theme.comment)
+                                    .rounded(px(6.0))
+                                    .py(rems(1.0))
+                                    .px(rems(1.5))
+                                    .child(format!("\u{1F980} rustmd v{}", env!("CARGO_PKG_VERSION")))
+                                    .child(
+                                        div()
+                                            .text_color(theme.comment)
+                                            .text_xs()
+                                            .child("based on writ editor")
+                                    )
+                                    .child(
+                                        div()
+                                            .mt(rems(0.5))
+                                            .pt(rems(0.5))
+                                            .border_t_1()
+                                            .border_color(theme.selection)
+                                            .text_color(theme.cyan)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.7))
+                                            .on_mouse_down(MouseButton::Left, |_, _, _cx| {
+                                                let path = rustmd::user_config::config_path();
+                                                if let Some(parent) = path.parent() {
+                                                    let _ = open::that(parent);
+                                                }
+                                            })
+                                            .child("Open Config Directory →")
+                                    )
+                            )
+                    }),
             )
     }
 }

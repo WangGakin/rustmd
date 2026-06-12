@@ -8,7 +8,7 @@ use crate::file_ops::{NewFile, OpenFile, Save};
 use crate::key_mode::KeyMode;
 use crate::window::NewWindow;
 
-actions!(menu, [ToggleKeyMode]);
+actions!(menu, [ToggleKeyMode, ToggleAbout]);
 
 pub struct ToolbarButton {
     pub name: SharedString,
@@ -32,10 +32,11 @@ pub fn get_toolbar_buttons(cx: &App) -> Vec<ToolbarButton> {
     };
 
     vec![
-        ToolbarButton::new("\u{1F4C4}", NewFile),   // 📄
-        ToolbarButton::new("\u{1F4C2}", OpenFile),  // 📂
-        ToolbarButton::new("\u{1F4BE}", Save),      // 💾
-        ToolbarButton::new("\u{1F532}", NewWindow), // 🔲
+        ToolbarButton::new("\u{1F980}", ToggleAbout), // 🦀
+        ToolbarButton::new("\u{1F4C4}", NewFile),     // 📄
+        ToolbarButton::new("\u{1F4C2}", OpenFile),    // 📂
+        ToolbarButton::new("\u{1F4BE}", Save),        // 💾
+        ToolbarButton::new("\u{1F532}", NewWindow),   // 🔲
         ToolbarButton::new(format!("⌨ {}", mode_text), ToggleKeyMode),
     ]
 }
@@ -50,7 +51,7 @@ pub fn toolbar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
         let name = button.name.to_string();
 
         // Separator between Save group and NewWindow
-        if index == 3 {
+        if index == 4 {
             button_elements.push(
                 div()
                     .px(px(2.0))
