@@ -10,7 +10,7 @@ impl Global for KeyMode {}
 
 impl Default for KeyMode {
     fn default() -> Self {
-        Self::Win
+        Self::Mac
     }
 }
 

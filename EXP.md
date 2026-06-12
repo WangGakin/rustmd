@@ -204,21 +204,14 @@ fn byte_to_char_safe(&self, byte_offset: usize) -> usize {
 10. **backspace 不能按字节删**：多字节字符（如中文 3 字节）的 `delete_backward` 必须用 `prev_char_boundary` 找完整字符边界，`cursor_pos - 1` 只删 1 字节 → UTF-8 断裂 → ropey panic/光标消失
 11. **byte_at 不能假设 char 对齐**：ropey 的 `byte_slice` 要求两端对齐 char 边界。`byte_at` 中 `byte_slice(offset..offset+1)` 在 offset 落入多字节字符中间时 panic。正确做法：char-based 访问（`byte_to_char_safe → char_to_byte → char → encode_utf8 → 按相对偏移取字节`）
 12. **IME 中文标点双路重叠**：中文模式下按标点键时，`on_key_down` 先插入 ASCII 版（如 `,`），`replace_text_in_range` 后收到全角版（如 `，`），需在 IME handler 中检测光标前的 ASCII 标点并替换为 IME 版本
-13. 
+13. **IME 取消时必须同时清理状态和 buffer**：`replace_text_in_range`/`replace_and_mark_text_in_range` 收到空字符串时，不能只清除 `ime_marked_range` 和调用 `cx.notify()`，还必须 `buffer.delete(mark)` 删除 composition 文本。否则拼音原样留在编辑区，表现为"键盘锁死"（GPUI 认为组合已结束，但用户看到残留拼音以为锁住了）或"Esc 取消后拼音残留"
+14. **`replace_text_in_range` 与 `replace_and_mark_text_in_range` 是两条独立的事件路径**：微软拼音使用后者维护 composition 标记，手心输入法可能使用前者（或根本不维护 marked_range）。不能假设所有 IME 都走同一条路径。当 `replace_text_in_range` 在"无 composition"状态收到中文时，应启发式检查光标前的 ASCII 字母（如未标记的拼音）并替换之，而非直接 insert
+15. **首字母残留的时序成因**：IME 组合的第一个字符会通过 `on_key_down` 插入 buffer，然后 `replace_and_mark_text_in_range` 再替换它。如果替换时 `cursor.saturating_sub(new_len)` 范围内实际文本与预期不匹配（如 Shouxin 带空格的 composition 字符串 → 启发了 precondition 检查 → fallback insert），会导致重复插入。**最佳做法是保持原始替换逻辑，不加入前置条件校验**——校验本身引入了时序依赖的 bug
+16. **`unmark_text` 删除 composition 文本必须加 ASCII 守卫**：`unmark_text` 可能在确认和取消两个场景被调用。确认场景下 marked_range 已被 `replace_text_in_range` 的 `take()` 清空，`unmark_text` 的 `if let Some(mark)` 分支不会执行。但如果因事件顺序异常导致 mark 仍然存在，删除 text 会误删中文。必须检查 marked_text 是否仍为 ASCII 字母（拼音）才执行删除
 
 ## 九、待解决问题
 
-1. ~~上轮未能修复的问题：markdown语法输入过程中，实时渲染-编辑状态反复转换，导致输入区域闪烁，应固定在编辑状态，等光标移走再实时渲染。~~ **已修复（2026-06-10）**：根因是 `visual_cursor_offset` 在光标 blink 关闭阶段被设为 `usize::MAX`，导致 Line 组件认为光标不在当前行，从而隐藏所有 markdown 标记（切换到渲染模式）。修复方案：将光标位置（用于编辑模式检测）与光标可见性（用于 blink 动画）解耦，新增 `show_cursor: bool` 字段独立控制光标视觉渲染。
-
-原分析过程：
-**光标 blink 不能触发重量级渲染**：render 中的 `detect_links` → `spawn_github_validation` 链路应受 `content_changed` 守卫。否则 blink 定时器的 500ms `cx.notify()` 反复执行解析/验证 async spawn，造成文本框闪烁
-
-当时执行的改进：
-| 问题 | 修复文件 | 修复摘要 |
-|------|----------|----------|
-| 光标闪烁导致文本框 flickering | `src/editor/mod.rs` | render 中 `detect_links` 等重量级操作受 `content_changed` 守卫，blink 周期不再重复执行 |
-
-补充信息：实时渲染功能为开源项目writ特性，代码位于：C:\Users\Benai\writ-main，必要时应对照检查是否在修改中破坏了原本的渲染功能。
+已在第十轮完成改进。
 
 ## 十、改进记录
 
@@ -674,4 +667,127 @@ loop {
 1. **`return` 在闭包中只退出闭包** — 需要在 `editor.update()` 外部判断是否继续执行 `window.remove_window()`
 2. **`editor.update(cx, ...)` 可以返回值** — 利用返回值传递决策（是否关闭窗口），避免标志位或外部状态
 3. **`cx.listener()` 提供 `WindowContext`** — 比 bare `on_action(|...|)` 更方便使用 `window.defer()`
+
+### 2026-06-11（第十二批 — Ctrl+L 居中、滚动 RefCell 修复、scroll beyond last line）
+
+**新增功能：Ctrl+L 居中当前行（Mac mode）**
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/action.rs` | 新增 `CenterLine` Action |
+| `src/editor/mod.rs` | `pub use action::{CenterLine, ...}`；render 中添加 `.on_action` handler |
+| `src/main.rs` | 注册 `ctrl-l` keybinding |
+
+**居中实现：**
+
+```
+Case A（行可见有 bounds）→ 立即 scroll_by(offset)
+Case B（行不可见/未测量）→ scroll_to_reveal_item + window.defer 延迟到布局后居中
+```
+
+**关键修复：watch_file async loop RefCell panic**
+
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| 窗口拖动时崩溃 | `watch_file` 的 async loop 使用 `cx.update()`（`borrow_mut` 会 panic）；窗口拖动期间 `SendMessageW(WM_NCLBUTTONDOWN)` 创建嵌套消息循环，App RefCell 被事件处理器借用 | `watch_file` 改为 `cx.update_window(window, ...)`（`try_borrow_mut` 返回 `Err` 而非 panic） |
+
+**scroll beyond last line**
+
+为使最后一行也能居中，增加最后一项的 `padding_bottom`：
+
+```rust
+let padding_bottom = padding_bottom_px + viewport_h / 2.0;
+```
+
+效果类似 VS Code 的 `editor.scrollBeyondLastLine`。副作用：在最后一行时有打字机式自动居中。
+
+**其他：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/key_mode.rs` | `Default::default()` 改为 `Self::Mac` |
+
+**涉及文件：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/action.rs` | 新增 `CenterLine` |
+| `src/editor/mod.rs` | CenterLine handler、scroll_beyond_last_line、watch_file 改用 update_window |
+| `src/main.rs` | 注册 ctrl-l |
+| `src/key_mode.rs` | 默认 Mac mode |
+
+### 2026-06-11（第十三批 — JSON 配置、默认启动、光标闪烁修复、scroll beyond 微调）
+
+**JSON 配置文件**
+
+新增 `src/user_config.rs`，首次启动自动创建 `config.json`（路径由 `dirs::config_dir()` 决定）：
+
+| 平台 | 路径 |
+|------|------|
+| Windows | `%APPDATA%\rustmd\config.json` |
+| macOS | `~/Library/Application Support/rustmd/config.json` |
+| Linux | `~/.config/rustmd/config.json` |
+
+内置 dracula/nord 两套预设，用户可自定义完整色值。
+
+| 文件 | 改动 |
+|------|------|
+| `src/user_config.rs` | **新建** — UserConfig、SerializedTheme、load_config/save_config |
+| `Cargo.toml` | 添加 `dirs = "5"` 依赖 |
+| `src/lib.rs` | `pub mod user_config;` |
+| `src/main.rs` | 启动时 `load_config()` 加载 theme/font 写入 `EditorConfig` |
+| `src/editor/mod.rs` | `pub mod theme;`（导出供 user_config 使用） |
+
+**光标闪烁修复**
+
+**根因：** `start_cursor_blink` 在 `Editor::new` 期间调用时 `cx.windows()` 返回空列表。
+
+**修复：** 改为外部传入 `AnyWindowHandle`，从 `with_config` 中移除调用，在 main.rs 中 `cx.new()` 返回后用 `window.window_handle()` 传入。
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/mod.rs` | 签名改为 `(handle: AnyWindowHandle, cx)`；导入 `AnyWindowHandle`；移除 `with_config` 中的调用 |
+| `src/main.rs` | `cx.new()` 后 `editor.update(cx, \|editor, cx\| editor.start_cursor_blink(handle, cx))` |
+
+**scroll beyond 微调**
+
+打字机效应的根因：auto-scroll 用 `item_bounds.size.height`（含视图半高空白）判断光标位置。最后一行改用 `line_height` 替代。
+
+**默认启动行为**
+
+`config.rs` 移除 `file` 参数的 `required_unless_present = "demo"`，无参数自动空白新建。启动时 `eprintln!("[rustmd] config: {:?}", path)` 显示配置路径。
+
+**经验总结：**
+
+1. **GPUI AsyncApp 没有 `windows()`** — `ViewContext::windows()` 在构造阶段可能返回空。需用 `window.window_handle()` 获取 handle
+2. **`dirs::config_dir()` 各平台不同** — Windows `%APPDATA%`，macOS `~/Library/Application Support`，Linux `~/.config`
+3. **`EditorConfig.theme` 需显式传入** — `..Default::default()` 不会自动使用 `cx.set_global` 的 theme
+
+### 2026-06-11（第十四批 — IME 取消拼音残留 + 不同 IME 兼容性修复）
+
+**问题：** Esc/Backspace IME 取消后拼音文本残留；手心输入法（Shouxin）完成输入后遗留首字符；微软输入法退格删空后遗留首字符。
+
+**根因分析：**
+
+1. **取消时不删除 composition 文本** — 第一轮修复仅清除了 `ime_marked_range` 并调用 `cx.notify()`，但 buffer 里的拼音没有被 `delete()` 掉，导致残留
+2. **首字符前置条件检查引发副作用** — 第一轮添加的 `&full[before..cursor] != new` 检查，当 Shouxin 发送含空格的 composition 字符串时会触发 fallback insert，把拼音再次插入 buffer 而非替换
+3. **不同 IME 使用不同事件路径** — 微软拼音通过 `replace_and_mark_text_in_range` 维护 `ime_marked_range`，Shouxin 可能通过 `replace_text_in_range` 发送组合更新（或不发后续更新），`ime_marked_range` 始终为 `None`
+
+**修复方案：**
+
+| 方法 | 改动 |
+|------|------|
+| `replace_text_in_range` | 空字符串时 `buffer.delete(mark)` 删除 composition 文本；非 ASCII 分支增加未标记 composition 启发式（光标前 ASCII 字母替换为中文） |
+| `replace_and_mark_text_in_range` | 空字符串时 `buffer.delete(mark)`；回退原始第一字符逻辑（`cursor.saturating_sub(new_len)`），移除 precondition 检查 |
+| `unmark_text` | `if let Some(mark)` 时检查 marked_text 是否仍为 ASCII 字母，是则删除（安全防护，应对 IME 只调 `unmark_text` 不发送空字符串的场景） |
+| `on_key_down`（mod.rs） | 保留第一轮的越界 staleness 检查 |
+
+**涉及文件：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/ime.rs` | 三轮修改：取消时删除 composition 文本、移除 precondition 检查、未标记 composition 启发式、unmark_text 带 ASCII 守卫的删除 |
+
+**经验总结：**
+见本章第八节第 13 ~ 16 条。
 

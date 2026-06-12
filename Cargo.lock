@@ -5537,7 +5537,7 @@ dependencies = [
 
 [[package]]
 name = "rustmd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -5545,6 +5545,7 @@ dependencies = [
  "async-process",
  "async-trait",
  "clap",
+ "dirs 5.0.1",
  "futures",
  "gix",
  "gpui",

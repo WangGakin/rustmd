@@ -58,7 +58,18 @@ impl EntityInputHandler for Editor {
         // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
             let ascii = text.len() == 1 && text.as_bytes()[0].is_ascii_alphabetic();
-            if ascii || text.is_empty() { return; }
+            if ascii {
+                return;
+            }
+            // IME cancellation: empty text means composition was aborted
+            if text.is_empty() {
+                if let Some(mark) = self.ime_marked_range.take() {
+                    self.state.buffer.delete(mark.clone(), mark.end);
+                    self.state.selection = Selection::new(mark.start, mark.start);
+                }
+                cx.notify();
+                return;
+            }
             // IME confirmation: replace composition text
             let mark = self.ime_marked_range.take().unwrap();
             let new_end = self.state.buffer.replace(mark.clone(), text, mark.start);
@@ -82,7 +93,7 @@ impl EntityInputHandler for Editor {
             if text.len() == 1 && text.as_bytes()[0].is_ascii() {
                 return;
             }
-            // Non-ASCII text (e.g. Chinese punctuation)
+            // Non-ASCII text (e.g. Chinese punctuation or IME confirmation)
             let mut cursor = self.state.cursor().offset;
             // on_key_down may have inserted the raw ASCII key before the
             // IME event arrived (e.g. ',' before '，'). Remove it.
@@ -94,7 +105,23 @@ impl EntityInputHandler for Editor {
                     cursor = prev_start;
                 }
             }
-            let new_end = self.state.buffer.insert(cursor, text, cursor);
+            // Some IMEs (e.g. Shouxin) send confirmation via replace_text_in_range
+            // without ever setting ime_marked_range. Detect ASCII letters before
+            // cursor and treat them as unmarked composition text to replace.
+            let mut composition_start = cursor;
+            while composition_start > 0 {
+                let b = self.state.buffer.byte_at(composition_start - 1);
+                if b.is_some_and(|b| b.is_ascii_alphabetic()) {
+                    composition_start -= 1;
+                } else {
+                    break;
+                }
+            }
+            let new_end = if composition_start < cursor && !text.is_empty() {
+                self.state.buffer.replace(composition_start..cursor, text, composition_start)
+            } else {
+                self.state.buffer.insert(cursor, text, cursor)
+            };
             self.state.selection = Selection::new(new_end, new_end);
             self.sync_list_state(cx);
             cx.notify();
@@ -117,7 +144,15 @@ impl EntityInputHandler for Editor {
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, _w: &mut Window, cx: &mut Context<Self>) {
         let full = self.state.buffer.text();
         let new_len = new.len();
-        if new_len == 0 { return; }
+        // IME cancellation: empty composition string means IME was aborted
+        if new_len == 0 {
+            if let Some(mark) = self.ime_marked_range.take() {
+                self.state.buffer.delete(mark.clone(), mark.end);
+                self.state.selection = Selection::new(mark.start, mark.start);
+            }
+            cx.notify();
+            return;
+        }
 
         let cursor = self.state.cursor().offset;
 
@@ -144,7 +179,19 @@ impl EntityInputHandler for Editor {
     }
 
     fn unmark_text(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
-        self.ime_marked_range = None;
+        if let Some(mark) = self.ime_marked_range.take() {
+            let full = self.state.buffer.text();
+            if mark.end <= full.len() {
+                let marked_text = &full[mark.start..mark.end];
+                // Only delete if the marked text is still ASCII letters (pinyin).
+                // If it contains non-ASCII, it was likely already replaced by
+                // confirmation text and we must not delete it.
+                if !marked_text.is_empty() && marked_text.bytes().all(|b| b.is_ascii_alphabetic()) {
+                    self.state.buffer.delete(mark.clone(), mark.end);
+                    self.state.selection = Selection::new(mark.start, mark.start);
+                }
+            }
+        }
         cx.notify();
     }
 

@@ -61,4 +61,5 @@ pub mod parser;
 pub mod paste;
 pub mod status_bar;
 pub mod title_bar;
+pub mod user_config;
 pub mod window;

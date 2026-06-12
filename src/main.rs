@@ -3,13 +3,14 @@ use gpui::*;
 use raw_window_handle::RawWindowHandle;
 use rustmd::config::Config;
 use rustmd::editor::ime::EditorImeElement;
-use rustmd::editor::{Editor, EditorTheme};
+use rustmd::editor::{CenterLine, Editor, EditorConfig, EditorTheme};
 use rustmd::file_ops::{NewFile, OpenFile, Save, SaveAs};
 use rustmd::key_mode::KeyMode;
 use rustmd::line::CursorScreenPosition;
 use rustmd::status_bar::StatusBarInfo;
 use rustmd::title_bar::FileInfo;
 use rustmd::menu::ToggleKeyMode;
+use rustmd::user_config;
 use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, ZoomWindow};
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
 
@@ -21,11 +22,19 @@ fn main() {
     Application::new().run(|cx: &mut App| {
         cx.activate(true);
 
-        let theme = EditorTheme::dracula();
+        let user_cfg = user_config::load_config();
+        let theme = user_cfg.theme.to_editor_theme();
         cx.set_global(theme.clone());
 
         let initial_path = rustmd::file_ops::initial_file_path(&config);
         let content = rustmd::file_ops::initial_content(&config);
+
+        let editor_config = EditorConfig {
+            text_font: user_cfg.text_font.clone(),
+            code_font: user_cfg.code_font.clone(),
+            theme: user_cfg.theme.to_editor_theme(),
+            ..Default::default()
+        };
 
         cx.set_global(config);
         cx.set_global(CursorScreenPosition::default());
@@ -41,6 +50,7 @@ fn main() {
             KeyBinding::new("ctrl-s", Save, None),
             KeyBinding::new("ctrl-shift-s", SaveAs, None),
             KeyBinding::new("ctrl-alt-n", NewFile, None),
+            KeyBinding::new("ctrl-l", CenterLine, None),
         ]);
 
         cx.on_window_closed(|cx| {
@@ -52,11 +62,20 @@ fn main() {
 
         let file_path_for_watcher = initial_path.clone();
 
+        let win_size = size(px(900.0), px(700.0));
+        let win_pos = cx.primary_display().map_or(point(px(0.), px(0.)), |d| {
+            let b = d.bounds();
+            point(
+                b.origin.x + (b.size.width - win_size.width) / 2.0,
+                b.origin.y + (b.size.height - win_size.height) / 2.0,
+            )
+        });
+
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                    point(px(0.), px(0.)),
-                    size(px(900.0), px(700.0)),
+                    win_pos,
+                    win_size,
                 ))),
                 window_decorations: Some(WindowDecorations::Client),
                 titlebar: Some(TitlebarOptions {
@@ -67,12 +86,16 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
+                let handle = window.window_handle();
                 let editor = cx.new(|cx| {
-                    let mut editor = Editor::new(&content, cx);
+                    let mut editor = Editor::with_config(&content, editor_config, cx);
                     if let Some(path) = file_path_for_watcher {
                         editor.watch_file(path, cx);
                     }
                     editor
+                });
+                editor.update(cx, |editor, cx| {
+                    editor.start_cursor_blink(handle, cx);
                 });
                 window.focus(&editor.read(cx).focus_handle(cx));
                 cx.new(|_cx| RootView { editor })

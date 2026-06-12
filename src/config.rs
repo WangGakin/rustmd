@@ -25,7 +25,7 @@ const DEFAULT_CODE_FONT: &str = "Liberation Mono";
 #[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 pub struct Config {
-    #[arg(short, long, required_unless_present = "demo")]
+    #[arg(short, long)]
     pub file: Option<PathBuf>,
 
     #[arg(long)]

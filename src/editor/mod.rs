@@ -1,9 +1,9 @@
 mod action;
 mod config;
 pub mod ime;
-mod theme;
+pub mod theme;
 
-pub use action::{Direction, DispatchEditorAction, EditorAction};
+pub use action::{CenterLine, Direction, DispatchEditorAction, EditorAction};
 pub use config::EditorConfig;
 pub use theme::EditorTheme;
 
@@ -17,7 +17,7 @@ use std::sync::mpsc;
 static NEXT_EDITOR_ID: AtomicUsize = AtomicUsize::new(0);
 
 use gpui::{
-    AnyElement, App, Context, Corner, CursorStyle, DragMoveEvent, Empty, FocusHandle, Focusable,
+    AnyElement, AnyWindowHandle, App, Context, Corner, CursorStyle, DragMoveEvent, Empty, FocusHandle, Focusable,
     Hsla, IntoElement, KeyDownEvent, ListAlignment, ListState, ModifiersChangedEvent, MouseButton,
     ReadGlobal, Render, Rgba, TextRun, Window, anchored, div, font, list, point, prelude::*, px,
 };
@@ -1762,27 +1762,22 @@ impl Editor {
             cursor_blink_visible: true,
         };
 
-        editor.start_cursor_blink(cx);
         editor
     }
 
     /// Start a background timer that toggles cursor visibility every 500ms.
-    fn start_cursor_blink(&self, cx: &mut Context<Self>) {
-        let windows = cx.windows();
-        let window = windows.first().cloned();
+    pub fn start_cursor_blink(&self, handle: AnyWindowHandle, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             loop {
                 if !crate::file_ops::is_dialog_open() {
-                    if let Some(window) = window.clone() {
-                        let _ = cx.update_window(window, |_, _window, cx| {
-                            if let Some(editor) = this.upgrade() {
-                                editor.update(cx, |editor, cx| {
-                                    editor.cursor_blink_visible = !editor.cursor_blink_visible;
-                                    cx.notify();
-                                });
-                            }
-                        });
-                    }
+                    let _ = cx.update_window(handle.clone(), |_, _window, cx| {
+                        if let Some(editor) = this.upgrade() {
+                            editor.update(cx, |editor, cx| {
+                                editor.cursor_blink_visible = !editor.cursor_blink_visible;
+                                cx.notify();
+                            });
+                        }
+                    });
                 }
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(500))
@@ -2361,6 +2356,8 @@ impl Editor {
         self.file_watcher_rx = Some(rx);
         self.file_watcher = Some(watcher);
 
+        let windows = cx.windows();
+        let watch_window = windows.first().cloned();
         cx.spawn(async move |weak, cx| {
             loop {
                 cx.background_executor()
@@ -2369,26 +2366,28 @@ impl Editor {
 
                 let mut continue_loop = true;
                     if !crate::file_ops::is_dialog_open() {
-                        continue_loop = cx
-                            .update(|cx| {
-                                if let Some(editor) = weak.upgrade() {
-                                    editor.update(cx, |editor, cx| {
-                                        if let Some(rx) = &editor.file_watcher_rx {
-                                            let mut changed = false;
-                                            while rx.try_recv().is_ok() {
-                                                changed = true;
+                        if let Some(ref window) = watch_window {
+                            continue_loop = cx
+                                .update_window(window.clone(), |_, _window, cx| {
+                                    if let Some(editor) = weak.upgrade() {
+                                        editor.update(cx, |editor, cx| {
+                                            if let Some(rx) = &editor.file_watcher_rx {
+                                                let mut changed = false;
+                                                while rx.try_recv().is_ok() {
+                                                    changed = true;
+                                                }
+                                                if changed {
+                                                    editor.reload_file(cx);
+                                                }
                                             }
-                                            if changed {
-                                                editor.reload_file(cx);
-                                            }
-                                        }
-                                    });
-                                    true
-                                } else {
-                                    false
-                                }
-                            })
-                            .unwrap_or(false);
+                                        });
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                })
+                                .unwrap_or(false);
+                        }
                     }
 
                 if !continue_loop {
@@ -3249,6 +3248,15 @@ impl Editor {
         }
         self.reset_cursor_blink();
 
+        // Defensive: if IME marked range went stale (e.g. IME cancelled without cleanup),
+        // discard it so GPUI resumes normal keyboard dispatch.
+        if let Some(ref mark) = self.ime_marked_range {
+            let buf_len = self.state.buffer.len_bytes();
+            if mark.start > buf_len || mark.end > buf_len {
+                self.ime_marked_range = None;
+            }
+        }
+
         let keystroke = &event.keystroke;
 
         // Handle autocomplete keyboard navigation
@@ -4033,7 +4041,12 @@ impl Render for Editor {
             let scroll_buffer = self.config.line_height.to_pixels(window.rem_size());
             if let Some(cursor_bounds) = self.list_state.bounds_for_item(cursor_line) {
                 let viewport = self.list_state.viewport_bounds();
-                let cursor_bottom = cursor_bounds.origin.y + cursor_bounds.size.height;
+                let is_last = cursor_line == self.state.buffer.line_count().saturating_sub(1);
+                let cursor_bottom = if is_last {
+                    cursor_bounds.origin.y + scroll_buffer
+                } else {
+                    cursor_bounds.origin.y + cursor_bounds.size.height
+                };
                 let viewport_bottom = viewport.origin.y + viewport.size.height;
                 // Only scroll if cursor is near bottom edge (within buffer zone)
                 if cursor_bottom > viewport_bottom - scroll_buffer {
@@ -4047,7 +4060,13 @@ impl Render for Editor {
             if let Some(cursor_bounds) = self.list_state.bounds_for_item(cursor_line) {
                 let viewport = self.list_state.viewport_bounds();
                 let cursor_top = cursor_bounds.origin.y;
-                let cursor_bottom = cursor_top + cursor_bounds.size.height;
+                let is_last = cursor_line == self.state.buffer.line_count().saturating_sub(1);
+                let line_h = self.config.line_height.to_pixels(window.rem_size());
+                let cursor_bottom = if is_last {
+                    cursor_top + line_h
+                } else {
+                    cursor_top + cursor_bounds.size.height
+                };
                 let viewport_top = viewport.origin.y;
                 let viewport_bottom = viewport_top + viewport.size.height;
 
@@ -4062,7 +4081,9 @@ impl Render for Editor {
         let line_theme_for_list = line_theme.clone();
         let theme_for_highlights = self.config.theme.clone();
         let padding_top = self.config.padding_top;
-        let padding_bottom = self.config.padding_bottom;
+        let padding_bottom_px = self.config.padding_bottom.to_pixels(window.rem_size());
+        let viewport_h = self.list_state.viewport_bounds().size.height;
+        let padding_bottom = padding_bottom_px + viewport_h / 2.0;
         let max_line_width = self.config.max_line_width;
         let snapshot = self.state.buffer.render_snapshot();
         let diff_state = self.diff_state.clone();
@@ -4332,6 +4353,49 @@ impl Render for Editor {
                         entity.update(cx, |editor, cx| {
                             editor.new_file(cx);
                             crate::file_ops::set_dialog_open(false);
+                        });
+                    });
+                },
+            ))
+            .on_action(cx.listener(
+                |editor: &mut Editor, _: &CenterLine, window, cx| {
+                    if !KeyMode::is_mac(cx) {
+                        return;
+                    }
+                    let cursor = editor.state.selection.head;
+                    let line_idx = editor.state.buffer.byte_to_line(cursor);
+
+                    // Case A: line is visible and measured → center immediately
+                    if let Some(item_bounds) = editor.list_state.bounds_for_item(line_idx) {
+                        let viewport = editor.list_state.viewport_bounds();
+                        let viewport_center_y = viewport.origin.y + viewport.size.height / 2.0;
+                        let item_center_y = item_bounds.origin.y + item_bounds.size.height / 2.0;
+                        let offset = item_center_y - viewport_center_y;
+
+                        if offset != px(0.0) {
+                            editor.list_state.scroll_by(offset);
+                            cx.notify();
+                        }
+                        return;
+                    }
+
+                    // Case B: line not measured — reveal it, then center after layout
+                    editor.list_state.scroll_to_reveal_item(line_idx);
+                    let entity = cx.entity().clone();
+                    window.defer(cx, move |_window, cx| {
+                        entity.update(cx, |editor, cx| {
+                            let Some(item_bounds) = editor.list_state.bounds_for_item(line_idx) else {
+                                return;
+                            };
+                            let viewport = editor.list_state.viewport_bounds();
+                            let viewport_center_y = viewport.origin.y + viewport.size.height / 2.0;
+                            let item_center_y = item_bounds.origin.y + item_bounds.size.height / 2.0;
+                            let offset = item_center_y - viewport_center_y;
+
+                            if offset != px(0.0) {
+                                editor.list_state.scroll_by(offset);
+                                cx.notify();
+                            }
                         });
                     });
                 },

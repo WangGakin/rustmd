@@ -60,3 +60,8 @@ pub enum Direction {
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(no_json)]
 pub struct DispatchEditorAction(pub EditorAction);
+
+/// Center the current line in the viewport (Ctrl+L).
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct CenterLine;
