@@ -43,7 +43,6 @@ use crate::status_bar::StatusBarInfo;
 
 use crate::buffer::{Buffer, RenderSnapshot};
 use crate::cursor::{Cursor, Selection};
-use crate::diff::DiffState;
 use crate::github::{GitHubClient, GitHubValidationCache, IssueOrPr, IssueStatus};
 use crate::inline::{
     GitHubContext, GitHubRef, NakedUrl, RawGitHubMatch, StyledRegion,
@@ -1703,13 +1702,6 @@ pub struct Editor {
     cursor_screen_pos: Rc<RefCell<CursorScreenPosition>>,
     /// Unique instance ID for element IDs to prevent GPUI element caching conflicts.
     instance_id: usize,
-    /// Diff state for reviewing agent edits. When set, the editor shows
-    /// inline diff decorations (ghost lines for deletions, green highlights for additions).
-    diff_state: Option<DiffState>,
-    /// When true, an agent write is pending and file watcher reloads should be blocked.
-    /// This prevents the race condition where file watcher reloads the new content
-    /// before we can capture the old content for diffing.
-    pending_agent_write: bool,
     /// Line ranges that are user messages (for chat editor background highlighting).
     /// Each range is start_line..end_line (exclusive).
     user_message_lines: Vec<Range<usize>>,
@@ -1766,8 +1758,6 @@ impl Editor {
             window_handle: None,
             cursor_screen_pos: Rc::new(RefCell::new(CursorScreenPosition::default())),
             instance_id: NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed),
-            diff_state: None,
-            pending_agent_write: false,
             user_message_lines: Vec::new(),
             cursor_blink_visible: true,
         };
@@ -1823,112 +1813,6 @@ impl Editor {
     /// Get a reference to the per-editor status bar info.
     pub fn status_info(&self) -> &StatusBarInfo {
         &self.status_info
-    }
-
-    /// Set the diff state for reviewing agent edits.
-    pub fn set_diff_state(&mut self, diff_state: Option<DiffState>) {
-        self.diff_state = diff_state;
-    }
-
-    /// Get a reference to the current diff state, if any.
-    pub fn diff_state(&self) -> Option<&DiffState> {
-        self.diff_state.as_ref()
-    }
-
-    /// Accept the hunk at the current cursor position.
-    /// Since changes are already applied, just remove the hunk from diff state.
-    pub fn accept_current_hunk(&mut self, cx: &mut Context<Self>) {
-        let cursor_line = self.state.buffer.byte_to_line(self.state.selection.head);
-
-        if let Some(ref mut diff_state) = self.diff_state
-            && let Some(hunk_idx) = diff_state.hunk_at_line(cursor_line)
-        {
-            // Accept = just remove the hunk (changes already applied)
-            diff_state.remove_hunk(hunk_idx, 0);
-
-            // If no more hunks, clear diff state entirely
-            if diff_state.hunks.is_empty() {
-                self.diff_state = None;
-            }
-            cx.notify();
-        }
-    }
-
-    /// Accept all pending hunks.
-    pub fn accept_all_hunks(&mut self, cx: &mut Context<Self>) {
-        if self.diff_state.is_some() {
-            self.diff_state = None;
-            cx.notify();
-        }
-    }
-
-    /// Reject the hunk at the current cursor position.
-    /// Restores the old content from the snapshot.
-    pub fn reject_current_hunk(&mut self, cx: &mut Context<Self>) {
-        let cursor_line = self.state.buffer.byte_to_line(self.state.selection.head);
-
-        // Need to extract info before mutating
-        let reject_info = if let Some(ref diff_state) = self.diff_state {
-            if let Some(hunk_idx) = diff_state.hunk_at_line(cursor_line) {
-                diff_state
-                    .reject_hunk_info(hunk_idx)
-                    .map(|info| (hunk_idx, info))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        if let Some((hunk_idx, (old_text, new_line_range))) = reject_info {
-            // Replace the new lines with the old content
-            let start_byte = self.state.buffer.line_to_byte(new_line_range.start);
-            let end_byte = if new_line_range.end >= self.state.buffer.line_count() {
-                self.state.buffer.len_bytes()
-            } else {
-                self.state.buffer.line_to_byte(new_line_range.end)
-            };
-
-            // Replace the new content with old content
-            let cursor_before = self.state.selection.head;
-            self.state
-                .buffer
-                .replace(start_byte..end_byte, &old_text, cursor_before);
-
-            // Calculate line delta for adjusting subsequent hunks
-            let old_lines = old_text.chars().filter(|c| *c == '\n').count();
-            let new_line_count = new_line_range.len();
-            let line_delta = old_lines as isize - new_line_count as isize;
-
-            // Update diff state
-            if let Some(ref mut diff_state) = self.diff_state {
-                diff_state.remove_hunk(hunk_idx, line_delta);
-
-                if diff_state.hunks.is_empty() {
-                    self.diff_state = None;
-                }
-            }
-
-            // Move cursor to start of restored content
-            self.state.selection = Selection::new(start_byte, start_byte);
-            cx.notify();
-        }
-    }
-
-    /// Reject all pending hunks, restoring the entire old document.
-    pub fn reject_all_hunks(&mut self, cx: &mut Context<Self>) {
-        if let Some(ref diff_state) = self.diff_state {
-            let old_text = diff_state.reject_all_text();
-            self.set_text(&old_text, cx);
-            self.diff_state = None;
-            cx.notify();
-        }
-    }
-
-    /// Set the pending agent write flag.
-    /// When true, file watcher reloads are blocked to prevent race conditions.
-    pub fn set_pending_agent_write(&mut self, pending: bool) {
-        self.pending_agent_write = pending;
     }
 
     /// Set the GitHub context for autolink detection.
@@ -2416,16 +2300,6 @@ impl Editor {
 
     /// Reload the file from disk, replacing buffer contents.
     fn reload_file(&mut self, cx: &mut Context<Self>) {
-        // Don't reload while reviewing agent changes - the diff state would be lost
-        if self.diff_state.is_some() {
-            return;
-        }
-
-        // Don't reload if an agent write is pending - we need to capture the old content first
-        if self.pending_agent_write {
-            return;
-        }
-
         let Some(path) = &self.file_path else { return };
 
         if let Some(last_save_mtime) = self.last_save_mtime
@@ -3359,7 +3233,7 @@ impl Editor {
                     cx.notify();
                     return;
                 }
-                "n" if !self.diff_state.is_some() => {
+                "n" => {
                     self.move_in_direction(Direction::Down, extend);
                     cx.notify();
                     return;
@@ -3384,26 +3258,6 @@ impl Editor {
         }
 
         match keystroke.key.as_str() {
-            // Diff accept: Ctrl+Y (current hunk) or Ctrl+Shift+Y (all hunks)
-            "y" if (keystroke.modifiers.control || keystroke.modifiers.platform)
-                && self.diff_state.is_some() =>
-            {
-                if keystroke.modifiers.shift {
-                    self.accept_all_hunks(cx);
-                } else {
-                    self.accept_current_hunk(cx);
-                }
-            }
-            // Diff reject: Ctrl+N (current hunk) or Ctrl+Shift+N (all hunks)
-            "n" if (keystroke.modifiers.control || keystroke.modifiers.platform)
-                && self.diff_state.is_some() =>
-            {
-                if keystroke.modifiers.shift {
-                    self.reject_all_hunks(cx);
-                } else {
-                    self.reject_current_hunk(cx);
-                }
-            }
             "backspace" => {
                 self.delete_backward();
             }
@@ -3969,27 +3823,6 @@ impl Render for Editor {
             line_height: self.config.line_height,
         };
 
-        // Compute diff colors for line backgrounds and inline highlights
-        let diff_deleted_bg: Rgba = {
-            let mut c: Hsla = theme.red.into();
-            c.a = 0.05;
-            c.into()
-        };
-        let diff_added_bg: Rgba = {
-            let mut c: Hsla = theme.green.into();
-            c.a = 0.05;
-            c.into()
-        };
-        let diff_deleted_inline: Rgba = {
-            let mut c: Hsla = theme.red.into();
-            c.a = 0.25;
-            c.into()
-        };
-        let diff_added_inline: Rgba = {
-            let mut c: Hsla = theme.green.into();
-            c.a = 0.25;
-            c.into()
-        };
         let user_message_bg: Rgba = {
             let mut c: Hsla = theme.purple.into();
             c.a = 0.05;
@@ -4075,7 +3908,6 @@ impl Render for Editor {
         let padding_bottom = padding_bottom_px + viewport_h / 2.0;
         let max_line_width = self.config.max_line_width;
         let snapshot = self.state.buffer.render_snapshot();
-        let diff_state = self.diff_state.clone();
         let user_message_lines = self.user_message_lines.clone();
 
         let github_cache = self.github_validation_cache.clone();
@@ -4198,31 +4030,16 @@ impl Render for Editor {
                 });
 
                 // Determine line background and inline highlight colors
-                let is_addition = diff_state
-                    .as_ref()
-                    .map(|ds| ds.is_addition(ix))
-                    .unwrap_or(false);
                 let is_user_message = user_message_lines.iter().any(|r| r.contains(&ix));
 
-                let line_bg = if is_addition {
-                    Some(diff_added_bg)
-                } else if is_user_message {
+                let line_bg = if is_user_message {
                     Some(user_message_bg)
                 } else {
                     None
                 };
 
-                // Get inline diff ranges for this line (word-level changes)
-                let inline_highlight_ranges: Vec<Range<usize>> = diff_state
-                    .as_ref()
-                    .and_then(|ds| ds.new_inline_changes(ix))
-                    .map(|changes| changes.iter().map(|c| c.range.clone()).collect())
-                    .unwrap_or_default();
-                let inline_highlight_color = if !inline_highlight_ranges.is_empty() {
-                    Some(diff_added_inline)
-                } else {
-                    None
-                };
+                let inline_highlight_ranges: Vec<Range<usize>> = Vec::new();
+                let inline_highlight_color = None;
 
                 // Build the main line element
                 let line_element = build_line(
@@ -4238,54 +4055,12 @@ impl Render for Editor {
                     Some(cursor_screen_pos.clone()),
                 );
 
-                // Check for ghost lines (deleted lines from old snapshot) before this line
-                let ghost_line_elements: Vec<_> = if let Some(ds) = diff_state.as_ref() {
-                    if let Some(old_line_range) = ds.ghost_lines_before(ix) {
-                        old_line_range
-                            .filter_map(|old_ix| {
-                                if old_ix >= ds.old_snapshot.line_count() {
-                                    return None;
-                                }
-                                // Get inline diff ranges for this ghost line
-                                let ghost_inline_ranges: Vec<Range<usize>> = ds
-                                    .old_inline_changes(old_ix)
-                                    .map(|changes| {
-                                        changes.iter().map(|c| c.range.clone()).collect()
-                                    })
-                                    .unwrap_or_default();
-                                let ghost_inline_color = if !ghost_inline_ranges.is_empty() {
-                                    Some(diff_deleted_inline)
-                                } else {
-                                    None
-                                };
-                                Some(build_line(
-                                    &ds.old_snapshot,
-                                    old_ix,
-                                    Vec::new(),
-                                    Vec::new(),
-                                    None,
-                                    Some(diff_deleted_bg), // ghost line background
-                                    ghost_inline_ranges,
-                                    ghost_inline_color,
-                                    true, // block input for ghost lines
-                                    Some(cursor_screen_pos.clone()),
-                                ))
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                };
-
                 // Add top padding to first line, bottom padding to last line
                 let is_first = ix == 0;
                 let is_last = ix == snapshot.line_count().saturating_sub(1);
                 div()
                     .when(is_first, |d| d.pt(padding_top))
                     .when(is_last, |d| d.pb(padding_bottom))
-                    .children(ghost_line_elements)
                     .child(line_element)
                     .into_any_element()
             })

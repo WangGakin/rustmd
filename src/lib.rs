@@ -42,7 +42,6 @@ pub mod buffer;
 pub mod config;
 pub mod cursor;
 pub mod demo;
-pub mod diff;
 pub mod editor;
 pub mod file_ops;
 pub mod git;
