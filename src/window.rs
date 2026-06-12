@@ -4,9 +4,9 @@ use gpui::{
     px,
 };
 
-use crate::{editor::EditorTheme, status_bar::status_bar, title_bar::title_bar};
+use crate::editor::EditorTheme;
 
-actions!(window, [CloseWindow, Quit, MinimizeWindow, ZoomWindow]);
+actions!(window, [CloseWindow, Quit, MinimizeWindow, ZoomWindow, NewWindow]);
 
 #[derive(IntoElement)]
 pub struct WindowShadow {
@@ -153,14 +153,10 @@ impl RenderOnce for WindowShadow {
                     .bg(theme.background)
                     .size_full()
                     .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .child(title_bar(theme, cx))
                     .child(
-                        // Content area
+                        // Content area (RootView now controls title_bar + editor + status_bar layout)
                         div().flex_1().min_h_0().w_full().children(self.children),
-                    )
-                    .child(status_bar(cx)),
+                    ),
             )
     }
 }
