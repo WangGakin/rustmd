@@ -1,6 +1,8 @@
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui::{
     App, Font, FontStyle, FontWeight, Global, Hsla, IntoElement, MouseButton, MouseDownEvent,
@@ -22,8 +24,6 @@ pub struct CursorScreenPosition {
     /// Right edge of the line content area (for popup clamping).
     pub content_right_edge: Option<Pixels>,
 }
-
-impl Global for CursorScreenPosition {}
 
 /// Global state for hovered GitHub ref screen position, updated during Line paint.
 #[derive(Clone, Default, PartialEq)]
@@ -206,6 +206,8 @@ pub struct Line {
     /// Separate from cursor_offset, which is always the real position used
     /// for editing-mode detection (showing/hiding markdown markers).
     show_cursor: bool,
+    /// Shared storage for cursor screen position (set during paint).
+    cursor_screen_pos: Option<Rc<RefCell<CursorScreenPosition>>>,
 }
 
 impl Line {
@@ -227,6 +229,7 @@ impl Line {
         inline_highlight_ranges: Vec<Range<usize>>,
         inline_highlight_color: Option<Rgba>,
         show_cursor: bool,
+        cursor_screen_pos: Option<Rc<RefCell<CursorScreenPosition>>>,
     ) -> Self {
         let substitution = {
             let s = line.substitution_rope(&rope);
@@ -252,6 +255,7 @@ impl Line {
             inline_highlight_ranges,
             inline_highlight_color,
             show_cursor,
+            cursor_screen_pos,
         }
     }
 
@@ -1054,6 +1058,7 @@ impl Line {
 
     fn render_cursor(&self, cursor_pos: usize, text_layout: gpui::TextLayout) -> impl IntoElement {
         let cursor_color = self.theme.cursor_color;
+        let csp = self.cursor_screen_pos.clone();
 
         canvas(
             move |_bounds, _window, _cx| {
@@ -1087,10 +1092,12 @@ impl Line {
 
                 // Store cursor position and content bounds for autocomplete popup positioning
                 // pos from position_for_index appears to already be in absolute coords
-                cx.set_global(CursorScreenPosition {
-                    position: Some(pos),
-                    content_right_edge: Some(bounds.origin.x + bounds.size.width),
-                });
+                if let Some(csp) = &csp {
+                    *csp.borrow_mut() = CursorScreenPosition {
+                        position: Some(pos),
+                        content_right_edge: Some(bounds.origin.x + bounds.size.width),
+                    };
+                }
 
                 let text_style = window.text_style();
                 let font_size = text_style.font_size.to_pixels(window.rem_size());

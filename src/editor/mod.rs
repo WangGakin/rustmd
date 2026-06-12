@@ -10,6 +10,8 @@ pub use theme::EditorTheme;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 
@@ -1694,6 +1696,12 @@ pub struct Editor {
     /// Whether this is the primary editor that updates global state (status bar, title bar).
     /// Only one editor should have this set to true at a time.
     is_primary: bool,
+    /// Per-editor status bar info (replaces global StatusBarInfo).
+    status_info: StatusBarInfo,
+    /// Window handle for async operations (replaces cx.windows().first()).
+    window_handle: Option<AnyWindowHandle>,
+    /// Shared cursor screen position (written by Line paint, read by autocomplete popup).
+    cursor_screen_pos: Rc<RefCell<CursorScreenPosition>>,
     /// Unique instance ID for element IDs to prevent GPUI element caching conflicts.
     instance_id: usize,
     /// Diff state for reviewing agent edits. When set, the editor shows
@@ -1755,6 +1763,9 @@ impl Editor {
             autocomplete: None,
             autocomplete_debounce_task: None,
             is_primary: true, // Default to primary; secondary editors should call set_primary(false)
+            status_info: StatusBarInfo::default(),
+            window_handle: None,
+            cursor_screen_pos: Rc::new(RefCell::new(CursorScreenPosition::default())),
             instance_id: NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed),
             diff_state: None,
             pending_agent_write: false,
@@ -1766,7 +1777,8 @@ impl Editor {
     }
 
     /// Start a background timer that toggles cursor visibility every 500ms.
-    pub fn start_cursor_blink(&self, handle: AnyWindowHandle, cx: &mut Context<Self>) {
+    pub fn start_cursor_blink(&mut self, handle: AnyWindowHandle, cx: &mut Context<Self>) {
+        self.window_handle = Some(handle);
         cx.spawn(async move |this, cx| {
             loop {
                 if !crate::file_ops::is_dialog_open() {
@@ -1807,6 +1819,11 @@ impl Editor {
     /// Get the file path this editor is editing, if any.
     pub fn file_path(&self) -> Option<&PathBuf> {
         self.file_path.as_ref()
+    }
+
+    /// Get a reference to the per-editor status bar info.
+    pub fn status_info(&self) -> &StatusBarInfo {
+        &self.status_info
     }
 
     /// Set the diff state for reviewing agent edits.
@@ -2768,8 +2785,10 @@ impl Editor {
         let theme = &self.config.theme;
 
         // Get absolute cursor position (set during Line paint)
-        let cursor_screen_pos = CursorScreenPosition::global(cx);
+        let cursor_screen_pos = self.cursor_screen_pos.borrow();
         let cursor_pos = cursor_screen_pos.position?;
+        let content_right_edge = cursor_screen_pos.content_right_edge;
+        drop(cursor_screen_pos);
 
         // Get viewport bounds for fallback
         let viewport = self.list_state.viewport_bounds();
@@ -2784,8 +2803,7 @@ impl Editor {
 
         // Clamp x to keep popup within content area (only if fixed width)
         let popup_x = if let Some(width) = popup_width {
-            let content_right = cursor_screen_pos
-                .content_right_edge
+            let content_right = content_right_edge
                 .unwrap_or(viewport.origin.x + viewport.size.width);
             cursor_pos.x.min(content_right - width)
         } else {
@@ -2880,6 +2898,7 @@ impl Editor {
                             Vec::new(), // no inline highlight ranges
                             None,       // no inline highlight color
                             false,      // no cursor in popup
+                            None,       // no cursor screen pos in popup
                         )
                         .with_prefix(prefix_text, prefix_runs)
                         .truncate(px(484.0))
@@ -3086,6 +3105,7 @@ impl Editor {
                     Vec::new(), // no inline highlight ranges
                     None,       // no inline highlight color
                     false,      // no cursor in popup
+                    None,       // no cursor screen pos in popup
                 )
                 .with_prefix(prefix_text, prefix_runs)
                 .truncate(px(484.0))
@@ -3873,17 +3893,6 @@ impl Render for Editor {
             self.sync_list_state(cx);
         }
 
-        if self.is_primary {
-            let file_info = FileInfo::global(cx);
-            let dirty = self.state.buffer.is_dirty();
-            if file_info.path != self.file_path || file_info.dirty != dirty {
-                cx.set_global(FileInfo {
-                    path: self.file_path.clone(),
-                    dirty,
-                });
-            }
-        }
-
         // Update status bar info
         let cursor_offset = self.state.cursor().offset;
         let cursor_line = self.state.buffer.byte_to_line(cursor_offset);
@@ -3929,9 +3938,9 @@ impl Render for Editor {
             self.fetch_autocomplete_suggestions_debounced(cx);
         }
 
-        // Only primary editor updates global status bar info
+        // Only primary editor updates status bar info
         if self.is_primary {
-            let new_status_bar_info = StatusBarInfo {
+            self.status_info = StatusBarInfo {
                 context_markers,
                 heading_level,
                 cursor_line: cursor_line + 1, // 1-indexed
@@ -3940,9 +3949,6 @@ impl Render for Editor {
                 first_visible_line,
                 last_visible_line,
             };
-            if new_status_bar_info != *StatusBarInfo::global(cx) {
-                cx.set_global(new_status_bar_info);
-            }
         }
 
         let theme = self.config.theme.clone();
@@ -4095,6 +4101,7 @@ impl Render for Editor {
         let input_blocked = self.input_blocked;
 
         let editor_id = self.instance_id;
+        let cursor_screen_pos = self.cursor_screen_pos.clone();
         let line_list = div().id(("line-list", editor_id)).size_full().child(
             list(self.list_state.clone(), move |ix, _window, _cx| {
                 // Bounds check: ensure line index is valid for this snapshot
@@ -4117,7 +4124,8 @@ impl Render for Editor {
                                   line_background: Option<Rgba>,
                                   inline_highlight_ranges: Vec<Range<usize>>,
                                   inline_highlight_color: Option<Rgba>,
-                                  block_input: bool|
+                                  block_input: bool,
+                                  csp: Option<Rc<RefCell<CursorScreenPosition>>>|
                  -> Line {
                     let line_markers = snap.line_markers(line_idx);
                     let mut inline_styles = snap.inline_styles_for_line(line_idx);
@@ -4164,6 +4172,7 @@ impl Render for Editor {
                         } else {
                             show_cursor_visual
                         },
+                        csp,
                     )
                 };
 
@@ -4243,6 +4252,7 @@ impl Render for Editor {
                     inline_highlight_ranges,
                     inline_highlight_color,
                     false, // don't block input for main lines
+                    Some(cursor_screen_pos.clone()),
                 );
 
                 // Check for ghost lines (deleted lines from old snapshot) before this line
@@ -4275,6 +4285,7 @@ impl Render for Editor {
                                     ghost_inline_ranges,
                                     ghost_inline_color,
                                     true, // block input for ghost lines
+                                    Some(cursor_screen_pos.clone()),
                                 ))
                             })
                             .collect()
