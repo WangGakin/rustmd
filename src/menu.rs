@@ -4,8 +4,9 @@ use gpui::{
 };
 
 use crate::editor::EditorTheme;
-use crate::file_ops::{NewFile, OpenFile, Save, SaveAs};
+use crate::file_ops::{NewFile, OpenFile, Save};
 use crate::key_mode::KeyMode;
+use crate::window::NewWindow;
 
 actions!(menu, [ToggleKeyMode]);
 
@@ -25,17 +26,17 @@ impl ToolbarButton {
 
 pub fn get_toolbar_buttons(cx: &App) -> Vec<ToolbarButton> {
     let mode_text = if KeyMode::is_mac(cx) {
-        "Mac Mode"
+        "Mac"
     } else {
-        "Win Mode"
+        "Win"
     };
 
     vec![
         ToolbarButton::new("New", NewFile),
         ToolbarButton::new("Open", OpenFile),
         ToolbarButton::new("Save", Save),
-        ToolbarButton::new("Save As", SaveAs),
-        ToolbarButton::new(mode_text, ToggleKeyMode),
+        ToolbarButton::new("New Window", NewWindow),
+        ToolbarButton::new(format!("{} Mode", mode_text), ToggleKeyMode),
     ]
 }
 

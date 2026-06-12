@@ -10,7 +10,7 @@ use rustmd::status_bar::status_bar;
 use rustmd::title_bar::{title_bar, FileInfo};
 use rustmd::menu::ToggleKeyMode;
 use rustmd::user_config;
-use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, ZoomWindow};
+use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, NewWindow, ZoomWindow};
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
 
 fn main() {
@@ -43,6 +43,7 @@ fn main() {
             KeyBinding::new("ctrl-s", Save, None),
             KeyBinding::new("ctrl-shift-s", SaveAs, None),
             KeyBinding::new("ctrl-alt-n", NewFile, None),
+            KeyBinding::new("ctrl-shift-n", NewWindow, None),
             KeyBinding::new("ctrl-l", CenterLine, None),
         ]);
 
@@ -102,6 +103,54 @@ fn main() {
         )
         .unwrap();
     });
+}
+
+fn open_new_window(cx: &mut App) {
+    let user_cfg = user_config::load_config();
+    let editor_config = EditorConfig {
+        text_font: user_cfg.text_font.clone(),
+        code_font: user_cfg.code_font.clone(),
+        theme: user_cfg.theme.to_editor_theme(),
+        ..Default::default()
+    };
+
+    let win_size = size(px(900.0), px(700.0));
+    let win_pos = cx.primary_display().map_or(point(px(0.), px(0.)), |d| {
+        let b = d.bounds();
+        point(
+            b.origin.x + (b.size.width - win_size.width) / 2.0,
+            b.origin.y + (b.size.height - win_size.height) / 2.0,
+        )
+    });
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(win_pos, win_size))),
+            window_decorations: Some(WindowDecorations::Client),
+            titlebar: Some(TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                traffic_light_position: None,
+            }),
+            ..Default::default()
+        },
+        |window, cx| {
+            let handle = window.window_handle();
+            let editor = cx.new(|cx| Editor::with_config("", editor_config, cx));
+            editor.update(cx, |editor, cx| {
+                editor.start_cursor_blink(handle, cx);
+            });
+            window.focus(&editor.read(cx).focus_handle(cx));
+            cx.new(|_cx| RootView {
+                editor,
+                file_info: FileInfo {
+                    path: None,
+                    dirty: false,
+                },
+            })
+        },
+    )
+    .unwrap();
 }
 
 struct RootView {
@@ -171,6 +220,9 @@ impl Render for RootView {
                         KeyMode::toggle(cx);
                         cx.refresh_windows();
                     })
+                    .on_action(cx.listener(|_: &mut RootView, _: &NewWindow, _window, cx| {
+                        open_new_window(cx);
+                    }))
                     .flex()
                     .flex_col()
                     .child(title_bar(&theme, &self.file_info, cx))
