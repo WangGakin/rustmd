@@ -939,3 +939,42 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 
 **解决：** 将 `code.ico` 复制到 `res/` 目录中，`icon.rc` 直接引用 `code.ico`（无相对路径）。
 
+### 10. 编辑器滚动条（2026-06-13）
+
+**需求：** 长文档翻页缺少视觉索引，需要滚动条。
+
+**实现方案：**
+
+- 滚动条作为 `Editor::render()` 的内联子元素，绝对定位于编辑区右侧
+- 轨道 8px 宽，hover 展开至 12px；滑块、轨道均 4px 圆角
+- 颜色：轨道 `theme.comment` 15% 透明度，滑块 40% 透明度，hover 60%
+- 滑块最小高度 20px
+- 内容不超出视口时隐藏（返回 `None`）
+
+**数据流：**
+
+```
+total_h = Σ measured item heights + unmeasured × default_line_h
+thumb_h = max(track_h × viewport_h / total_h, 20px)
+thumb_top = track_h × scroll_offset / total_h
+```
+
+已测量行高度通过 `list_state.bounds_for_item(i)` 获取，未测量行用默认行高估算。`compute_scroll_offset_pixels()` 通过累加 `logical_scroll_top()` 之前的行高计算当前滚动位置。
+
+**交互：**
+
+- **拖拽滑块**：`on_drag_move` 中按比例计算滚动增量 `delta_y / (track_h - thumb_h) × total_h`，调用 `list_state.scroll_by()`
+- **点击轨道**：滑块上方 = 上翻一页，下方 = 下翻一页
+- **fallback 清理**：编辑器根节点的 `on_mouse_up` 也清除 `scrollbar_drag_start_y`，防止拖拽鼠标移出滚动条区域时状态残留
+
+**代码量：** 约 170 行（`src/editor/mod.rs` 单个文件）
+
+**涉及文件：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/mod.rs` | 新增 `ScrollbarDrag` 标记结构体；`scrollbar_drag_start_y` 字段；`compute_total_content_height` / `compute_scroll_offset_pixels` 辅助方法；`render_scrollbar` 完整渲染逻辑；render 中接入 `.children(scrollbar_element)` |
+
+**设计文档：** `docs/superpowers/specs/2026-06-13-editor-scrollbar-design.md`
+**实施计划：** `docs/superpowers/plans/2026-06-13-editor-scrollbar.md`
+
