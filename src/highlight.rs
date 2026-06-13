@@ -99,12 +99,6 @@ impl Highlighter {
             languages.insert("cs".to_string(), Arc::clone(&config));
         }
 
-        // Register HTML
-        if let Some(config) = Self::create_html_config() {
-            let config = Arc::new(config);
-            languages.insert("html".to_string(), Arc::clone(&config));
-        }
-
         // Register CSS
         if let Some(config) = Self::create_css_config() {
             let config = Arc::new(config);
@@ -215,24 +209,6 @@ impl Highlighter {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Failed to create C# highlight config: {}", e);
-                    return None;
-                }
-            };
-
-        config.configure(HIGHLIGHT_NAMES);
-
-        Some(LanguageConfig { config })
-    }
-
-    fn create_html_config() -> Option<LanguageConfig> {
-        let language = tree_sitter_html::LANGUAGE.into();
-        let highlights_query = tree_sitter_html::HIGHLIGHTS_QUERY;
-
-        let mut config =
-            match HighlightConfiguration::new(language, "html", highlights_query, "", "") {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Failed to create HTML highlight config: {}", e);
                     return None;
                 }
             };
@@ -355,9 +331,9 @@ mod tests {
         assert!(highlighter.supports_language("csharp"));
         assert!(highlighter.supports_language("c#"));
         assert!(highlighter.supports_language("cs"));
-        assert!(highlighter.supports_language("html"));
         assert!(highlighter.supports_language("css"));
         assert!(highlighter.supports_language("json"));
+        assert!(!highlighter.supports_language("html"));
         assert!(!highlighter.supports_language("unknown_lang_xyz"));
     }
 
@@ -427,6 +403,22 @@ mod tests {
             })
             .collect();
         assert!(!main_spans.is_empty(), "Should have @function* for 'main'");
+    }
+
+    #[test]
+    fn test_all_languages_produce_highlights() {
+        let mut highlighter = Highlighter::new();
+        let cases = [
+            ("python", "import os\n"),
+            ("javascript", "const x = 1;\n"),
+            ("csharp", "class Foo {}\n"),
+            ("css", "body { color: red; }\n"),
+            ("json", "{\"a\":1}\n"),
+        ];
+        for (lang, code) in cases {
+            let spans = highlighter.highlight(code, lang);
+            assert!(!spans.is_empty(), "{lang} should produce spans for {code:?}");
+        }
     }
 
     #[test]

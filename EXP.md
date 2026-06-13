@@ -896,7 +896,7 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 - 回调参数 `&bool`：`true` = 鼠标进入，`false` = 鼠标离开
 - Tooltip 在鼠标点击按钮时也会自动隐藏（`on_mouse_down` 中调用 `Tooltip::hide`）
 
-### 7. 扩展代码高亮语言（Python/JS/C#/HTML/CSS/JSON）
+### 7. 扩展代码高亮语言（Python/JS/C#/CSS/JSON）
 
 **背景：** 原仅支持 Rust 和 Bash。需要在代码块中为更多语言提供语法高亮。
 
@@ -912,11 +912,12 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 | Python | `tree-sitter-python 0.25` | `python`, `py` |
 | JavaScript | `tree-sitter-javascript 0.25` | `javascript`, `js` |
 | C# | `tree-sitter-c-sharp 0.23` | `csharp`, `c#`, `cs` |
-| HTML | `tree-sitter-html 0.23` | `html` |
 | CSS | `tree-sitter-css 0.25` | `css` |
 | JSON | `tree-sitter-json 0.24` | `json` |
 
-**体积影响：** release 二进制约 18.3 MB（6 种语言合计增加约 1-2 MB），完全可控。
+**体积影响：** release 二进制约 17.5 MB（5 种语言合计增加约 1-2 MB），完全可控。
+
+**注意：** HTML 已被移除（缺少嵌入式 CSS/JS 注入查询支持）。
 
 **注意：** `embed-resource` 的 RC.EXE 在 release 构建中会验证 `.ico` 文件路径。需在 `res/` 目录下也放置一份图标副本，否则 release 构建失败。图标文件本身由 git 跟踪管理，`git checkout` 后需手动恢复。
 
