@@ -105,20 +105,32 @@ impl EntityInputHandler for Editor {
                     cursor = prev_start;
                 }
             }
-            // Some IMEs (e.g. Shouxin) send confirmation via replace_text_in_range
-            // without ever setting ime_marked_range. Detect ASCII letters before
-            // cursor and treat them as unmarked composition text to replace.
-            let mut composition_start = cursor;
-            while composition_start > 0 {
-                let b = self.state.buffer.byte_at(composition_start - 1);
-                if b.is_some_and(|b| b.is_ascii_alphabetic()) {
-                    composition_start -= 1;
-                } else {
-                    break;
+            // Only treat preceding ASCII as unmarked composition text
+            // if the new text looks like IME confirmation output
+            // (CJK ideographs, kana, hangul) rather than direct
+            // input like Chinese punctuation.
+            let is_ime_output = text.chars().any(|c| matches!(c as u32,
+                0x3040..=0x309F | // Hiragana
+                0x30A0..=0x30FF | // Katakana
+                0x3400..=0x4DBF | // CJK Extension A
+                0x4E00..=0x9FFF | // CJK Unified Ideographs
+                0xAC00..=0xD7AF   // Hangul Syllables
+            ));
+            let new_end = if is_ime_output {
+                let mut composition_start = cursor;
+                while composition_start > 0 {
+                    let b = self.state.buffer.byte_at(composition_start - 1);
+                    if b.is_some_and(|b| b.is_ascii_alphabetic()) {
+                        composition_start -= 1;
+                    } else {
+                        break;
+                    }
                 }
-            }
-            let new_end = if composition_start < cursor && !text.is_empty() {
-                self.state.buffer.replace(composition_start..cursor, text, composition_start)
+                if composition_start < cursor && !text.is_empty() {
+                    self.state.buffer.replace(composition_start..cursor, text, composition_start)
+                } else {
+                    self.state.buffer.insert(cursor, text, cursor)
+                }
             } else {
                 self.state.buffer.insert(cursor, text, cursor)
             };

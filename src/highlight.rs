@@ -77,6 +77,46 @@ impl Highlighter {
             languages.insert("shell".to_string(), Arc::clone(&config));
         }
 
+        // Register Python
+        if let Some(config) = Self::create_python_config() {
+            let config = Arc::new(config);
+            languages.insert("python".to_string(), Arc::clone(&config));
+            languages.insert("py".to_string(), Arc::clone(&config));
+        }
+
+        // Register JavaScript
+        if let Some(config) = Self::create_javascript_config() {
+            let config = Arc::new(config);
+            languages.insert("javascript".to_string(), Arc::clone(&config));
+            languages.insert("js".to_string(), Arc::clone(&config));
+        }
+
+        // Register C#
+        if let Some(config) = Self::create_csharp_config() {
+            let config = Arc::new(config);
+            languages.insert("csharp".to_string(), Arc::clone(&config));
+            languages.insert("c#".to_string(), Arc::clone(&config));
+            languages.insert("cs".to_string(), Arc::clone(&config));
+        }
+
+        // Register HTML
+        if let Some(config) = Self::create_html_config() {
+            let config = Arc::new(config);
+            languages.insert("html".to_string(), Arc::clone(&config));
+        }
+
+        // Register CSS
+        if let Some(config) = Self::create_css_config() {
+            let config = Arc::new(config);
+            languages.insert("css".to_string(), Arc::clone(&config));
+        }
+
+        // Register JSON
+        if let Some(config) = Self::create_json_config() {
+            let config = Arc::new(config);
+            languages.insert("json".to_string(), Arc::clone(&config));
+        }
+
         Self { inner, languages }
     }
 
@@ -116,6 +156,119 @@ impl Highlighter {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("Failed to create Bash highlight config: {}", e);
+                    return None;
+                }
+            };
+
+        config.configure(HIGHLIGHT_NAMES);
+
+        Some(LanguageConfig { config })
+    }
+
+    fn create_python_config() -> Option<LanguageConfig> {
+        let language = tree_sitter_python::LANGUAGE.into();
+        let highlights_query = tree_sitter_python::HIGHLIGHTS_QUERY;
+
+        let mut config =
+            match HighlightConfiguration::new(language, "python", highlights_query, "", "") {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create Python highlight config: {}", e);
+                    return None;
+                }
+            };
+
+        config.configure(HIGHLIGHT_NAMES);
+
+        Some(LanguageConfig { config })
+    }
+
+    fn create_javascript_config() -> Option<LanguageConfig> {
+        let language = tree_sitter_javascript::LANGUAGE.into();
+        let highlights_query = tree_sitter_javascript::HIGHLIGHT_QUERY;
+
+        let mut config = match HighlightConfiguration::new(
+            language,
+            "javascript",
+            highlights_query,
+            "",
+            "",
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Failed to create JavaScript highlight config: {}", e);
+                return None;
+            }
+        };
+
+        config.configure(HIGHLIGHT_NAMES);
+
+        Some(LanguageConfig { config })
+    }
+
+    fn create_csharp_config() -> Option<LanguageConfig> {
+        let language = tree_sitter_c_sharp::LANGUAGE.into();
+        let highlights_query = tree_sitter_c_sharp::HIGHLIGHTS_QUERY;
+
+        let mut config =
+            match HighlightConfiguration::new(language, "csharp", highlights_query, "", "") {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create C# highlight config: {}", e);
+                    return None;
+                }
+            };
+
+        config.configure(HIGHLIGHT_NAMES);
+
+        Some(LanguageConfig { config })
+    }
+
+    fn create_html_config() -> Option<LanguageConfig> {
+        let language = tree_sitter_html::LANGUAGE.into();
+        let highlights_query = tree_sitter_html::HIGHLIGHTS_QUERY;
+
+        let mut config =
+            match HighlightConfiguration::new(language, "html", highlights_query, "", "") {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create HTML highlight config: {}", e);
+                    return None;
+                }
+            };
+
+        config.configure(HIGHLIGHT_NAMES);
+
+        Some(LanguageConfig { config })
+    }
+
+    fn create_css_config() -> Option<LanguageConfig> {
+        let language = tree_sitter_css::LANGUAGE.into();
+        let highlights_query = tree_sitter_css::HIGHLIGHTS_QUERY;
+
+        let mut config =
+            match HighlightConfiguration::new(language, "css", highlights_query, "", "") {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create CSS highlight config: {}", e);
+                    return None;
+                }
+            };
+
+        config.configure(HIGHLIGHT_NAMES);
+
+        Some(LanguageConfig { config })
+    }
+
+    fn create_json_config() -> Option<LanguageConfig> {
+        let language = tree_sitter_json::LANGUAGE.into();
+        let highlights_query = tree_sitter_json::HIGHLIGHTS_QUERY;
+
+        let mut config =
+            match HighlightConfiguration::new(language, "json", highlights_query, "", "") {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Failed to create JSON highlight config: {}", e);
                     return None;
                 }
             };
@@ -195,7 +348,17 @@ mod tests {
         assert!(highlighter.supports_language("bash"));
         assert!(highlighter.supports_language("sh"));
         assert!(highlighter.supports_language("shell"));
-        assert!(!highlighter.supports_language("python"));
+        assert!(highlighter.supports_language("python"));
+        assert!(highlighter.supports_language("py"));
+        assert!(highlighter.supports_language("javascript"));
+        assert!(highlighter.supports_language("js"));
+        assert!(highlighter.supports_language("csharp"));
+        assert!(highlighter.supports_language("c#"));
+        assert!(highlighter.supports_language("cs"));
+        assert!(highlighter.supports_language("html"));
+        assert!(highlighter.supports_language("css"));
+        assert!(highlighter.supports_language("json"));
+        assert!(!highlighter.supports_language("unknown_lang_xyz"));
     }
 
     #[test]

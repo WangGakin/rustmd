@@ -896,3 +896,45 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 - 回调参数 `&bool`：`true` = 鼠标进入，`false` = 鼠标离开
 - Tooltip 在鼠标点击按钮时也会自动隐藏（`on_mouse_down` 中调用 `Tooltip::hide`）
 
+### 7. 扩展代码高亮语言（Python/JS/C#/HTML/CSS/JSON）
+
+**背景：** 原仅支持 Rust 和 Bash。需要在代码块中为更多语言提供语法高亮。
+
+**做法：**
+- `Cargo.toml` 新增 6 个 tree-sitter 语言 crate
+- `highlight.rs`：每个语言按相同模式添加 `create_xxx_config()` + `Highlighter::new()` 中注册（含别名映射）
+- 所有语言使用内置 `HIGHLIGHTS_QUERY`（JavaScript 例外为 `HIGHLIGHT_QUERY`，单数），无需额外 `queries/` 文件
+
+**别名约定：**
+
+| 语言 | crate | 注册别名 |
+|------|-------|---------|
+| Python | `tree-sitter-python 0.25` | `python`, `py` |
+| JavaScript | `tree-sitter-javascript 0.25` | `javascript`, `js` |
+| C# | `tree-sitter-c-sharp 0.23` | `csharp`, `c#`, `cs` |
+| HTML | `tree-sitter-html 0.23` | `html` |
+| CSS | `tree-sitter-css 0.25` | `css` |
+| JSON | `tree-sitter-json 0.24` | `json` |
+
+**体积影响：** release 二进制约 18.3 MB（6 种语言合计增加约 1-2 MB），完全可控。
+
+**注意：** `embed-resource` 的 RC.EXE 在 release 构建中会验证 `.ico` 文件路径。需在 `res/` 目录下也放置一份图标副本，否则 release 构建失败。图标文件本身由 git 跟踪管理，`git checkout` 后需手动恢复。
+
+### 8. 修复 icon.rc 文件路径问题
+
+### 9. 修复中文标点误删英文文本
+
+**问题：** 纯英文后输入中文标点（如 "hello，"），编辑器将英文当作未标记的 IME 拼音文本删除。
+
+**根因：** `replace_text_in_range` 中的"未标记 composition"启发式（专门为手心输入法等不发送 `replace_and_mark_text_in_range` 的 IME 设计）无条件扫描光标前全部 ASCII 字母，将其替换为传入的非 ASCII 文本。中文标点（如 "，"，U+FF0C）也触发此逻辑。
+
+**修复：** 仅在传入文本包含真正的 IME 输出字符（CJK 表意文字 U+4E00-U+9FFF、假名 U+3040-U+30FF、谚文 U+AC00-U+D7AF 等）时才触发替换启发式；中文标点等符号直接插入光标位置。
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/ime.rs` | `replace_text_in_range` 非 ASCII 分支：增加 `is_ime_output` 校验，仅对符合 IME 输出特征的文本执行 ASCII 回扫替换 |
+
+**问题：** release 构建时 RC.EXE 找不到 `..\code.ico`（路径解析相对于 RC 工作目录，而非 `.rc` 文件所在目录）。
+
+**解决：** 将 `code.ico` 复制到 `res/` 目录中，`icon.rc` 直接引用 `code.ico`（无相对路径）。
+
