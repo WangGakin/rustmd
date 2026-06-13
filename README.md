@@ -2,7 +2,7 @@
 
 一个基于 GPUI 框架的 Markdown 实时渲染编辑器，灵感来源于 Typora。
 
-rustmd 基于 [writ](https://github.com/nicholasgasior/writ) 编辑器内核构建，提供所见即所得的 Markdown 编辑体验——光标离开时隐藏 `**`、`#`、`-` 等标记符号，仅显示渲染后的样式效果。
+rustmd 基于 [writ](https://github.com/wilfreddenton/writ) 编辑器内核构建，提供所见即所得的 Markdown 编辑体验——光标离开时隐藏 `**`、`#`、`-` 等标记符号，仅显示渲染后的样式效果。
 
 ## 主要特性
 
