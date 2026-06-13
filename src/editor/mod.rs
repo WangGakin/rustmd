@@ -20,13 +20,16 @@ static NEXT_EDITOR_ID: AtomicUsize = AtomicUsize::new(0);
 
 use gpui::{
     AnyElement, AnyWindowHandle, App, Context, Corner, CursorStyle, DragMoveEvent, Empty, FocusHandle, Focusable,
-    Hsla, IntoElement, KeyDownEvent, ListAlignment, ListState, ModifiersChangedEvent, MouseButton,
-    Pixels, ReadGlobal, Render, Rgba, Window, anchored, div, font, list, point, prelude::*, px,
+    Font, Hsla, IntoElement, KeyDownEvent, ListAlignment, ListState, ModifiersChangedEvent, MouseButton,
+    Pixels, ReadGlobal, Render, Rgba, SharedString, TextRun, Window, anchored, div, font, list, point, prelude::*, px,
 };
 
 /// Marker type for text selection drag operations.
 /// Used with GPUI's on_drag/on_drag_move to receive mouse events outside element bounds.
 struct SelectionDrag;
+
+/// Marker type for scrollbar drag operations.
+struct ScrollbarDrag;
 
 /// Empty view for the drag ghost (we don't need a visible drag indicator).
 struct EmptyDragView;
@@ -1642,6 +1645,8 @@ pub struct Editor {
     /// True while actively dragging a selection. Used to prevent marker oscillation.
     /// Once set, stays true until mouse up to keep markers expanded.
     is_selecting: bool,
+    /// Y coordinate where scrollbar thumb drag started (None when not dragging).
+    scrollbar_drag_start_y: Option<Pixels>,
     /// Path to the file being edited (if any).
     file_path: Option<PathBuf>,
     /// Receiver for file watcher events.
@@ -1705,6 +1710,7 @@ impl Editor {
             last_drag_scroll: None,
             in_drag_scroll_zone: false,
             is_selecting: false,
+            scrollbar_drag_start_y: None,
             file_path: None,
             file_watcher_rx: None,
             file_watcher: None,
@@ -2459,7 +2465,296 @@ impl Editor {
         self.scroll_to_cursor_pending = true;
     }
 
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn move_in_direction_visual(
+        &mut self,
+        direction: Direction,
+        extend: bool,
+        window: &mut Window,
+    ) {
+        let (Direction::Up | Direction::Down) = direction else {
+            self.move_in_direction(direction, extend);
+            return;
+        };
+
+        let cursor_offset = self.state.cursor().offset;
+        let current_line_idx = self.state.buffer.byte_to_line(cursor_offset);
+        let line_range = self.state.buffer.line_byte_range(current_line_idx);
+        let line_text = self.state.buffer.slice_cow(line_range.clone()).into_owned();
+        let cursor_in_line = cursor_offset - line_range.start;
+
+        let rem_size = window.rem_size();
+        let viewport_width = self.list_state.viewport_bounds().size.width;
+        let max_width = self.config.max_line_width.unwrap_or(viewport_width);
+        let padding_x = self.config.padding_x.to_pixels(rem_size);
+        let available_width = (max_width.min(viewport_width) - padding_x * 2.0).max(px(1.0));
+
+        let text_style = window.text_style();
+        let font_size = text_style.font_size.to_pixels(rem_size);
+        let line_font = font(&self.config.text_font);
+
+        let wrap_offsets = Self::compute_wrap_offsets(
+            &line_text,
+            available_width,
+            &line_font,
+            font_size,
+            window,
+        );
+
+        let visual_row = wrap_offsets
+            .iter()
+            .position(|&o| o > cursor_in_line)
+            .unwrap_or(wrap_offsets.len());
+
+        let run = TextRun {
+            len: line_text.len(),
+            font: line_font.clone(),
+            color: gpui::transparent_black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let shared: SharedString = line_text.into();
+        let shaped = window
+            .text_system()
+            .shape_line(shared.clone(), font_size, &[run], None);
+
+        let current_row_start_byte = if visual_row == 0 {
+            0
+        } else {
+            wrap_offsets[visual_row - 1]
+        };
+        let row_start_x = shaped.x_for_index(current_row_start_byte);
+        let relative_x = if cursor_in_line >= current_row_start_byte {
+            shaped.x_for_index(cursor_in_line) - row_start_x
+        } else {
+            px(0.0)
+        };
+
+        let line_text = shared; // reuse for length
+        let line_len = line_text.len();
+
+        // Helper: on a given shaped line, find the byte offset at visual x
+        // within [row_start..row_end).
+        let offset_at_x = |shaped: &gpui::ShapedLine,
+                           row_start: usize,
+                           row_end: usize,
+                           x: Pixels|
+         -> usize {
+            let target_x = shaped.x_for_index(row_start) + x;
+            shaped
+                .index_for_x(target_x)
+                .unwrap_or(row_start)
+                .min(row_end)
+                .max(row_start)
+        };
+
+        let new_cursor_opt = if direction == Direction::Down {
+            if visual_row < wrap_offsets.len() {
+                let row_start = wrap_offsets[visual_row];
+                let row_end = if visual_row + 1 < wrap_offsets.len() {
+                    wrap_offsets[visual_row + 1]
+                } else {
+                    line_len
+                };
+                let idx = offset_at_x(&shaped, row_start, row_end, relative_x);
+                Some(Cursor {
+                    offset: line_range.start + idx,
+                })
+            } else {
+                // Last visual row — cross into next buffer line
+                let target_line = current_line_idx + 1;
+                if target_line >= self.state.buffer.line_count() {
+                    None
+                } else {
+                    self.visual_cross_line(
+                        target_line,
+                        relative_x,
+                        available_width,
+                        &line_font,
+                        font_size,
+                        /* from_end = */ false,
+                        window,
+                    )
+                }
+            }
+        } else if visual_row > 0 {
+            let prev_row_start = if visual_row == 1 {
+                0
+            } else {
+                wrap_offsets[visual_row - 2]
+            };
+            let row_end = wrap_offsets[visual_row - 1];
+            let idx = offset_at_x(&shaped, prev_row_start, row_end, relative_x);
+            Some(Cursor {
+                offset: line_range.start + idx,
+            })
+        } else {
+            // First visual row — cross into previous buffer line
+            if current_line_idx == 0 {
+                None
+            } else {
+                let target_line = current_line_idx - 1;
+                self.visual_cross_line(
+                    target_line,
+                    relative_x,
+                    available_width,
+                    &line_font,
+                    font_size,
+                    /* from_end = */ true,
+                    window,
+                )
+            }
+        };
+
+        match new_cursor_opt {
+            Some(new_cursor) => {
+                self.move_cursor(new_cursor, extend);
+                self.scroll_to_cursor_pending = true;
+            }
+            None => {
+                self.move_in_direction(direction, extend);
+            }
+        }
+    }
+
+    fn visual_cross_line(
+        &mut self,
+        target_line_idx: usize,
+        visual_x: Pixels,
+        available_width: Pixels,
+        font: &Font,
+        font_size: Pixels,
+        from_end: bool,
+        window: &mut Window,
+    ) -> Option<Cursor> {
+        let target_range = self.state.buffer.line_byte_range(target_line_idx);
+        let target_text = self
+            .state
+            .buffer
+            .slice_cow(target_range.clone())
+            .into_owned();
+        if target_text.is_empty() {
+            return Some(Cursor {
+                offset: target_range.start,
+            });
+        }
+
+        let wrap_offsets = Self::compute_wrap_offsets(
+            &target_text,
+            available_width,
+            font,
+            font_size,
+            window,
+        );
+
+        let run = TextRun {
+            len: target_text.len(),
+            font: font.clone(),
+            color: gpui::transparent_black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let shared: SharedString = target_text.into();
+        let shaped = window
+            .text_system()
+            .shape_line(shared.clone(), font_size, &[run], None);
+
+        let line_len = shared.len();
+        if from_end && !wrap_offsets.is_empty() {
+            // Enter the LAST visual row
+            let last_row_start = wrap_offsets.last().copied().unwrap_or(0);
+            let target_x = shaped.x_for_index(last_row_start) + visual_x;
+            let idx = shaped
+                .index_for_x(target_x)
+                .unwrap_or(line_len)
+                .min(line_len)
+                .max(last_row_start);
+            Some(Cursor {
+                offset: target_range.start + idx,
+            })
+        } else {
+            // Enter the FIRST visual row (or the only row if no wrapping)
+            let row_end = wrap_offsets.first().copied().unwrap_or(line_len);
+            let target_x = shaped.x_for_index(0) + visual_x;
+            let idx = shaped
+                .index_for_x(target_x)
+                .unwrap_or(0)
+                .min(row_end);
+            Some(Cursor {
+                offset: target_range.start + idx,
+            })
+        }
+    }
+
+    fn compute_wrap_offsets(
+        text: &str,
+        available_width: Pixels,
+        font: &Font,
+        font_size: Pixels,
+        window: &mut Window,
+    ) -> Vec<usize> {
+        if text.is_empty() || available_width <= px(0.0) {
+            return Vec::new();
+        }
+
+        let shared: SharedString = text.to_string().into();
+        let run = TextRun {
+            len: shared.len(),
+            font: font.clone(),
+            color: gpui::transparent_black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let shaped = window
+            .text_system()
+            .shape_line(shared.clone(), font_size, &[run], None);
+
+        if shaped.width <= available_width {
+            return Vec::new();
+        }
+
+        let text_len = shared.len();
+        let mut offsets = Vec::new();
+        let mut current_row_start = 0;
+
+        while current_row_start < text_len {
+            let start_x = shaped.x_for_index(current_row_start);
+            let end_x = start_x + available_width;
+
+            if end_x >= shaped.width {
+                break;
+            }
+
+            let Some(idx) = shaped.index_for_x(end_x) else { break };
+            let wrap_idx = if idx <= current_row_start {
+                // Can't fit even one more char; advance minimally past char boundary
+                let mut w = current_row_start + 1;
+                while w < text_len && !shared.is_char_boundary(w) {
+                    w += 1;
+                }
+                w
+            } else {
+                let mut w = idx;
+                while w < text_len && !shared.is_char_boundary(w) {
+                    w += 1;
+                }
+                w
+            };
+
+            if wrap_idx >= text_len || wrap_idx <= current_row_start {
+                break;
+            }
+
+            current_row_start = wrap_idx;
+            offsets.push(current_row_start);
+        }
+
+        offsets
+    }
+
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if self.input_blocked {
             return;
         }
@@ -2553,12 +2848,12 @@ impl Editor {
                     return;
                 }
                 "p" => {
-                    self.move_in_direction(Direction::Up, extend);
+                    self.move_in_direction_visual(Direction::Up, extend, window);
                     cx.notify();
                     return;
                 }
                 "n" => {
-                    self.move_in_direction(Direction::Down, extend);
+                    self.move_in_direction_visual(Direction::Down, extend, window);
                     cx.notify();
                     return;
                 }
@@ -2595,10 +2890,10 @@ impl Editor {
                 self.move_in_direction(Direction::Right, extend);
             }
             "up" => {
-                self.move_in_direction(Direction::Up, extend);
+                self.move_in_direction_visual(Direction::Up, extend, window);
             }
             "down" => {
-                self.move_in_direction(Direction::Down, extend);
+                self.move_in_direction_visual(Direction::Down, extend, window);
             }
             "home" => {
                 let new_cursor = if keystroke.modifiers.control || keystroke.modifiers.platform {
@@ -3024,6 +3319,169 @@ impl Editor {
             }
         }
         cx.notify();
+    }
+
+    fn compute_total_content_height(&self, rem_size: Pixels) -> f32 {
+        let total_lines = self.state.buffer.line_count();
+        let default_line_h = f32::from(self.config.line_height.to_pixels(rem_size));
+
+        let mut measured_height = 0.0f32;
+        let mut measured_count = 0usize;
+
+        for i in 0..total_lines {
+            if let Some(bounds) = self.list_state.bounds_for_item(i) {
+                measured_height += f32::from(bounds.size.height);
+                measured_count += 1;
+            }
+        }
+
+        let unmeasured = total_lines.saturating_sub(measured_count);
+        measured_height + (unmeasured as f32 * default_line_h)
+    }
+
+    fn compute_scroll_offset_pixels(&self, rem_size: Pixels) -> f32 {
+        let default_line_h = f32::from(self.config.line_height.to_pixels(rem_size));
+        let scroll = self.list_state.logical_scroll_top();
+
+        let mut offset = 0.0f32;
+        for i in 0..scroll.item_ix {
+            if let Some(bounds) = self.list_state.bounds_for_item(i) {
+                offset += f32::from(bounds.size.height);
+            } else {
+                offset += default_line_h;
+            }
+        }
+        offset + f32::from(scroll.offset_in_item)
+    }
+
+    fn render_scrollbar(
+        &mut self,
+        theme: &EditorTheme,
+        rem_size: Pixels,
+        editor_id: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let viewport = self.list_state.viewport_bounds();
+        let viewport_h = f32::from(viewport.size.height);
+        let total_h = self.compute_total_content_height(rem_size);
+
+        if total_h <= viewport_h {
+            return None;
+        }
+
+        let track_h = viewport_h;
+        let min_thumb_h = 20.0f32;
+        let thumb_h = ((viewport_h / total_h) * track_h).max(min_thumb_h);
+        let scroll_offset = self.compute_scroll_offset_pixels(rem_size);
+        let thumb_top = if total_h > 0.0 {
+            (scroll_offset / total_h) * track_h
+        } else {
+            0.0
+        };
+        let thumb_top = thumb_top.min(track_h - thumb_h);
+
+        let track_color = {
+            let mut c: Hsla = theme.comment.into();
+            c.a = 0.15;
+            Rgba::from(c)
+        };
+        let thumb_color = {
+            let mut c: Hsla = theme.comment.into();
+            c.a = 0.4;
+            Rgba::from(c)
+        };
+        let thumb_hover_color = {
+            let mut c: Hsla = theme.comment.into();
+            c.a = 0.6;
+            Rgba::from(c)
+        };
+
+        let thumb_h_val = thumb_h;
+        let thumb_top_val = thumb_top;
+        let total_h_val = total_h;
+        let track_h_val = track_h;
+
+        Some(
+            div()
+                .id(("scrollbar", editor_id))
+                .absolute()
+                .right_0()
+                .top_0()
+                .h_full()
+                .w(px(8.0))
+                .hover(|d| d.w(px(12.0)))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(
+                        move |editor, event: &gpui::MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            window.prevent_default();
+
+                            let click_y = f32::from(event.position.y);
+
+                            if click_y >= thumb_top_val && click_y <= thumb_top_val + thumb_h_val {
+                                editor.scrollbar_drag_start_y = Some(px(click_y));
+                            } else {
+                                let thumb_center = thumb_top_val + thumb_h_val / 2.0;
+                                let page_size = px(viewport_h);
+                                if click_y < thumb_center {
+                                    editor.list_state.scroll_by(px(-viewport_h));
+                                } else {
+                                    editor.list_state.scroll_by(page_size);
+                                }
+                            }
+                            cx.notify();
+                        },
+                    ),
+                )
+                .on_drag(ScrollbarDrag, |_drag, _point, _window, cx| {
+                    cx.new(|_| EmptyDragView)
+                })
+                .on_drag_move(cx.listener(
+                    move |editor,
+                          event: &DragMoveEvent<ScrollbarDrag>,
+                          _window,
+                          cx| {
+                        let start_y = match editor.scrollbar_drag_start_y {
+                            Some(y) => y,
+                            None => return,
+                        };
+                        let mouse_y = event.event.position.y;
+                        let delta_y_px = f32::from(mouse_y) - f32::from(start_y);
+
+                        let track_range = track_h_val - thumb_h_val;
+                        if track_range > 0.0 {
+                            let content_delta =
+                                (delta_y_px / track_range) * total_h_val;
+                            editor.list_state.scroll_by(px(content_delta));
+                            editor.scrollbar_drag_start_y = Some(mouse_y);
+                            cx.notify();
+                        }
+                    },
+                ))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|editor, _event: &gpui::MouseUpEvent, _window, cx| {
+                        editor.scrollbar_drag_start_y = None;
+                        cx.notify();
+                    }),
+                )
+                .bg(track_color)
+                .rounded(px(4.0))
+                .cursor(CursorStyle::Arrow)
+                .child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .top(px(thumb_top))
+                        .h(px(thumb_h))
+                        .bg(thumb_color)
+                        .hover(|d| d.bg(thumb_hover_color))
+                        .rounded(px(4.0)),
+                )
+                .into_any_element(),
+        )
     }
 }
 
@@ -3581,6 +4039,7 @@ impl Render for Editor {
                 },
             )
             .child(line_list)
+            .children(self.render_scrollbar(&theme, window.rem_size(), editor_id, cx))
             .children(self.render_autocomplete(&line_theme, window, cx))
     }
 }
