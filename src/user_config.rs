@@ -33,10 +33,15 @@ pub struct SerializedTheme {
     pub pink: String,
 }
 
+pub enum Preset {
+    Dracula,
+    Nord,
+}
+
 impl Default for UserConfig {
     fn default() -> Self {
         Self {
-            theme: SerializedTheme::dracula(),
+            theme: SerializedTheme::from_preset(&Preset::Dracula),
             text_font: default_text_font(),
             code_font: default_code_font(),
             font_size_rem: 0.875,
@@ -45,7 +50,14 @@ impl Default for UserConfig {
 }
 
 impl SerializedTheme {
-    pub fn dracula() -> Self {
+    pub fn from_preset(preset: &Preset) -> Self {
+        match preset {
+            Preset::Nord => Self::nord(),
+            Preset::Dracula => Self::dracula(),
+        }
+    }
+
+    fn dracula() -> Self {
         Self {
             background: "#282A36".into(),
             foreground: "#F8F8F2".into(),
@@ -61,7 +73,7 @@ impl SerializedTheme {
         }
     }
 
-    pub fn nord() -> Self {
+    fn nord() -> Self {
         Self {
             background: "#2E3440".into(),
             foreground: "#D8DEE9".into(),
@@ -134,6 +146,7 @@ pub fn config_path() -> PathBuf {
 
 pub fn load_config() -> UserConfig {
     let path = config_path();
+    #[cfg(debug_assertions)]
     eprintln!("[rustmd] config: {:?}", path);
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);

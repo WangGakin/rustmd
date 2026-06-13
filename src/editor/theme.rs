@@ -18,10 +18,6 @@ pub const DEFAULT_TEXT_FONT: &str = "Liberation Sans";
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 pub const DEFAULT_CODE_FONT: &str = "Liberation Mono";
 
-/// Color theme for the editor.
-///
-/// Provides colors for the background, foreground, selection, and syntax
-/// highlighting. Use [`EditorTheme::dracula()`] for the built-in Dracula theme.
 #[derive(Clone)]
 pub struct EditorTheme {
     pub background: Rgba,
@@ -38,23 +34,6 @@ pub struct EditorTheme {
 }
 
 impl EditorTheme {
-    /// The Dracula color theme.
-    pub fn dracula() -> Self {
-        Self {
-            background: rgb(0x282A36),
-            foreground: rgb(0xF8F8F2),
-            selection: rgb(0x44475A),
-            comment: rgb(0x6272A4),
-            red: rgb(0xFF5555),
-            orange: rgb(0xFFB86C),
-            yellow: rgb(0xF1FA8C),
-            green: rgb(0x50FA7B),
-            cyan: rgb(0x8BE9FD),
-            purple: rgb(0xBD93F9),
-            pink: rgb(0xFF79C6),
-        }
-    }
-
     pub fn color_for_capture(&self, capture: &str) -> Rgba {
         // Handle specific sub-captures first
         match capture {
@@ -93,7 +72,19 @@ impl EditorTheme {
 
 impl Default for EditorTheme {
     fn default() -> Self {
-        Self::dracula()
+        Self {
+            background: rgb(0x282A36),
+            foreground: rgb(0xF8F8F2),
+            selection: rgb(0x44475A),
+            comment: rgb(0x6272A4),
+            red: rgb(0xFF5555),
+            orange: rgb(0xFFB86C),
+            yellow: rgb(0xF1FA8C),
+            green: rgb(0x50FA7B),
+            cyan: rgb(0x8BE9FD),
+            purple: rgb(0xBD93F9),
+            pink: rgb(0xFF79C6),
+        }
     }
 }
 

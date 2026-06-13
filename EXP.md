@@ -837,3 +837,62 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 4. **全屏遮罩 + 绝对定位 = 全局点击关闭** — 遮罩层（size_full + absolute）覆盖窗口，浮层作为同级后续元素自然在遮罩层之上。点击遮罩关闭，点击浮层正常交互
 5. **`open` crate 可跨平台打开文件/目录** — `open::that(path)` 调用 OS 默认打开方式，Win32 上等价于 `ShellExecuteW("open", path)`
 
+---
+
+## 十三、2026-06-13：问题修复与功能完善
+
+### 1. 删除死亡代码 demo.rs
+
+`demo_script()`、`DemoStep`、`DemoTiming` 全部定义但从未被调用，整文件死亡代码。直接删除并移除 `lib.rs` 中的 `pub mod demo`。
+
+### 2. 终端窗口修复
+
+**问题：** release 编译后运行时弹出控制台窗口，关闭控制台导致主程序退出。
+
+**根因：** 缺少 `#![windows_subsystem = "windows"]` 属性，Windows 将程序识别为控制台应用；`user_config.rs` 的 `eprintln!` 向 stderr 输出配置路径。
+
+**对策：**
+- `main.rs` 顶部加 `#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]` — release 模式不显示终端，debug 模式保留以查看 panic 信息
+- `eprintln!` 用 `#[cfg(debug_assertions)]` 包裹
+
+### 3. 主题代码重构
+
+**背景：** 代码中 `dracula()` / `nord()` 命名暗示存在"主题类型"，实际上 `EditorTheme` 只是一包颜色值，config 可以覆盖任意色值。
+
+**改动：**
+- `editor/theme.rs`：移除 `EditorTheme::dracula()` 方法，`Default` 直接硬编码 Dracula 色值
+- `user_config.rs`：新增 `pub enum Preset { Dracula, Nord }` + `SerializedTheme::from_preset(&Preset)` 工厂方法
+- `dracula()` / `nord()` 改为私有方法，外部通过 `from_preset()` 访问
+
+### 4. Windows 图标嵌入
+
+**背景：** 编译后的 exe 没有图标。
+
+**做法：**
+- `build.rs`：调用 `embed_resource::compile("res/icon.rc", std::iter::empty::<&str>())`
+- `res/icon.rc`：`MAINICON ICON "..\\code.ico"`
+- `Cargo.toml`：`[build-dependencies]` 加 `embed-resource = "2"`
+
+**注意：** embed-resource v2.5.2 的 `compile()` 需要两个参数（第二个参数为宏定义迭代器），传空迭代器即可。v3 已改为单参数。
+
+### 5. README 完善
+
+- 新增**工具栏图标对照表**（图标/功能/快捷键/悬停提示四列）
+- 新增**主题配置完整文档**（默认 JSON 示例、全部 11 个色值用途说明、Dracula/Nord 双色对照列）
+- 新增**命令行参数表**（`--file`/`--autosave`/`--github-token` 等）
+- 去除已删除的 `demo.rs` 架构引用，替换为 `tooltip.rs`
+
+### 6. 鼠标悬停提示（Tooltip）
+
+**需求：** 工具栏图标悬停时显示功能注释。
+
+**实现方案：**
+- `src/tooltip.rs`（新建）：`Tooltip` 结构体实现 `Global` trait，提供 `show(text, cx)` / `hide(cx)` 静态方法
+- `src/menu.rs`：`ToolbarButton` 增加 `description` 字段；每个按钮绑定 `on_hover` 事件，hover 时调用 `Tooltip::show()`，离开时调用 `Tooltip::hide()`
+- `src/main.rs`：`RootView::render()` 读取 `Tooltip::global(cx)`，有内容时渲染为绝对定位的白字深底圆角标签（位于标题栏下方）
+
+**技术细节：**
+- GPUI 0.2 的 `on_hover` 方法在 `StatefulInteractiveElement` trait 上，需额外 `use gpui::StatefulInteractiveElement`
+- 回调参数 `&bool`：`true` = 鼠标进入，`false` = 鼠标离开
+- Tooltip 在鼠标点击按钮时也会自动隐藏（`on_mouse_down` 中调用 `Tooltip::hide`）
+

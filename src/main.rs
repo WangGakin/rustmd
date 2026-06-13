@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use clap::Parser;
 use gpui::*;
 use gpui::prelude::FluentBuilder;
@@ -10,6 +12,7 @@ use rustmd::key_mode::KeyMode;
 use rustmd::status_bar::status_bar;
 use rustmd::title_bar::{title_bar, FileInfo};
 use rustmd::menu::{ToggleAbout, ToggleKeyMode};
+use rustmd::tooltip::Tooltip;
 use rustmd::user_config;
 use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, NewWindow, ZoomWindow};
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
@@ -37,6 +40,7 @@ fn main() {
 
         cx.set_global(config);
         cx.set_global(KeyMode::default());
+        cx.set_global(Tooltip { text: None });
 
         cx.bind_keys([
             KeyBinding::new("ctrl-o", OpenFile, None),
@@ -165,6 +169,7 @@ impl Render for RootView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = EditorTheme::global(cx).clone();
         let config = Config::global(cx).clone();
+        let tooltip = Tooltip::global(cx).clone();
 
         let editor = self.editor.read(cx);
         self.file_info.path = editor.file_path().cloned();
@@ -239,6 +244,21 @@ impl Render for RootView {
                             .child(EditorImeElement::new(self.editor.clone())),
                     )
                     .child(status_bar(&status_info, &theme, &config))
+                    .when_some(tooltip.text.clone(), |parent, text| {
+                        parent.child(
+                            div()
+                                .absolute()
+                                .top(rems(0.25))
+                                .left(px(0.0))
+                                .px(rems(0.5))
+                                .py(rems(0.15))
+                                .text_xs()
+                                .text_color(theme.background)
+                                .bg(theme.foreground)
+                                .rounded(px(4.0))
+                                .child(text),
+                        )
+                    })
                     .when(self.about_open, |parent| {
                         parent
                             .child(
