@@ -4020,9 +4020,16 @@ impl Render for Editor {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|editor, _event: &gpui::MouseUpEvent, _window, cx| {
-                    // Reset is_selecting when mouse is released
+                    let mut changed = false;
                     if editor.is_selecting {
                         editor.is_selecting = false;
+                        changed = true;
+                    }
+                    if editor.scrollbar_drag_start_y.is_some() {
+                        editor.scrollbar_drag_start_y = None;
+                        changed = true;
+                    }
+                    if changed {
                         cx.notify();
                     }
                 }),
