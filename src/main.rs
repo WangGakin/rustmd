@@ -7,10 +7,10 @@ use raw_window_handle::RawWindowHandle;
 use rustmd::config::Config;
 use rustmd::editor::ime::EditorImeElement;
 use rustmd::editor::{CenterLine, Editor, EditorConfig, EditorTheme};
-use rustmd::file_ops::{NewFile, OpenFile, Save, SaveAs};
+use rustmd::file_ops::{ClearRecentFiles, NewFile, OpenFile, OpenRecentFile, Save, SaveAs};
 use rustmd::key_mode::KeyMode;
 use rustmd::status_bar::status_bar;
-use rustmd::title_bar::{title_bar, FileInfo};
+use rustmd::title_bar::{title_bar, FileInfo, ToggleRecentFiles};
 use rustmd::menu::{ToggleAbout, ToggleKeyMode};
 use rustmd::tooltip::Tooltip;
 use rustmd::user_config;
@@ -92,6 +92,9 @@ fn main() {
                     }
                     editor
                 });
+                if let Some(ref path) = initial_path {
+                    rustmd::user_config::add_recent_file(path);
+                }
                 editor.update(cx, |editor, cx| {
                     editor.start_cursor_blink(handle, cx);
                 });
@@ -101,10 +104,11 @@ fn main() {
                     file_info: FileInfo {
                         path: initial_path.clone(),
                         dirty: false,
-                        recent_files: Vec::new(),
+                        recent_files: rustmd::user_config::recent_files(),
                         recent_files_open: false,
                     },
                     about_open: false,
+                    recent_files_open: false,
                 })
             },
         )
@@ -153,10 +157,11 @@ fn open_new_window(cx: &mut App) {
                 file_info: FileInfo {
                     path: None,
                     dirty: false,
-                    recent_files: Vec::new(),
+                    recent_files: rustmd::user_config::recent_files(),
                     recent_files_open: false,
                 },
                 about_open: false,
+                recent_files_open: false,
             })
         },
     )
@@ -167,6 +172,7 @@ struct RootView {
     editor: Entity<Editor>,
     file_info: FileInfo,
     about_open: bool,
+    recent_files_open: bool,
 }
 
 impl Render for RootView {
@@ -179,6 +185,8 @@ impl Render for RootView {
         self.file_info.path = editor.file_path().cloned();
         self.file_info.dirty = editor.is_dirty();
         let status_info = editor.status_info().clone();
+        self.file_info.recent_files = rustmd::user_config::recent_files();
+        self.file_info.recent_files_open = self.recent_files_open;
         let _ = editor;
 
         window_shadow(theme.clone())
@@ -238,6 +246,48 @@ impl Render for RootView {
                     .on_action(cx.listener(|this: &mut RootView, _: &ToggleAbout, _window, _cx| {
                         this.about_open = !this.about_open;
                     }))
+                    .on_action(cx.listener(
+                        |this: &mut RootView, _: &ToggleRecentFiles, _window, _cx| {
+                            this.recent_files_open = !this.recent_files_open;
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut RootView, action: &OpenRecentFile, _window, cx| {
+                            let index = action.0;
+                            let files = rustmd::user_config::recent_files();
+                            if let Some(path_str) = files.get(index) {
+                                let path = std::path::PathBuf::from(path_str);
+                                let editor = this.editor.clone();
+                                let should_open = editor.update(cx, |editor, cx| {
+                                    if editor.is_dirty() {
+                                        match rustmd::file_ops::confirm_discard() {
+                                            rustmd::file_ops::DiscardChoice::Save => {
+                                                editor.save(cx);
+                                                true
+                                            }
+                                            rustmd::file_ops::DiscardChoice::Cancel => false,
+                                            rustmd::file_ops::DiscardChoice::DontSave => true,
+                                        }
+                                    } else {
+                                        true
+                                    }
+                                });
+                                if should_open {
+                                    editor.update(cx, |editor, cx| {
+                                        editor.open_file_at(path, cx);
+                                    });
+                                }
+                            }
+                            this.recent_files_open = false;
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut RootView, _: &ClearRecentFiles, _window, _cx| {
+                            rustmd::user_config::clear_recent_files();
+                            this.recent_files_open = false;
+                        },
+                    ))
                     .flex()
                     .flex_col()
                     .child(title_bar(&theme, &self.file_info, cx))
@@ -312,6 +362,90 @@ impl Render for RootView {
                                             })
                                             .child("Open Config Directory →")
                                     )
+                            )
+                    })
+                    .when(self.recent_files_open, |parent| {
+                        let theme_clone = theme.clone();
+                        let files = rustmd::user_config::recent_files();
+                        parent
+                            .child(
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .top_0()
+                                    .left_0()
+                                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                        window.dispatch_action(ToggleRecentFiles.boxed_clone(), cx);
+                                    })
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(rems(2.5))
+                                    .right(rems(0.5))
+                                    .w(rems(18.0))
+                                    .bg(theme_clone.background)
+                                    .border_1()
+                                    .border_color(theme_clone.comment)
+                                    .rounded(px(4.0))
+                                    .py(rems(0.25))
+                                    .flex()
+                                    .flex_col()
+                                    .children(
+                                        files.iter().enumerate().map(|(i, path_str)| {
+                                            let p = std::path::Path::new(path_str);
+                                            let name = p
+                                                .file_name()
+                                                .map(|n| n.to_string_lossy().to_string())
+                                                .unwrap_or_else(|| path_str.clone());
+                                            let parent_name = p
+                                                .parent()
+                                                .and_then(|p| p.file_name())
+                                                .map(|n| n.to_string_lossy().to_string())
+                                                .unwrap_or_default();
+                                            let label = if parent_name.is_empty() {
+                                                name.clone()
+                                            } else {
+                                                format!("{} \u{2014} {}", name, parent_name)
+                                            };
+                                            let exists = p.exists();
+                                            let action = OpenRecentFile(i).boxed_clone();
+                                            div()
+                                                .px(rems(1.0))
+                                                .py(rems(0.3))
+                                                .text_color(theme_clone.foreground)
+                                                .when(!exists, |this| {
+                                                    this.text_color(theme_clone.comment)
+                                                })
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(theme_clone.selection))
+                                                .child(label)
+                                                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                                    window.dispatch_action(action.boxed_clone(), cx);
+                                                })
+                                                .into_any_element()
+                                        }).collect::<Vec<_>>()
+                                    )
+                                    .when(!files.is_empty(), |this| {
+                                        this.child(
+                                            div()
+                                                .mx(rems(1.0))
+                                                .border_t_1()
+                                                .border_color(theme_clone.selection)
+                                        )
+                                    })
+                                    .child(
+                                        div()
+                                            .px(rems(1.0))
+                                            .py(rems(0.3))
+                                            .text_color(theme_clone.comment)
+                                            .cursor_pointer()
+                                            .hover(|s| s.opacity(0.7))
+                                            .child("Clear Recent Files")
+                                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                                window.dispatch_action(ClearRecentFiles.boxed_clone(), cx);
+                                            })
+                                    ),
                             )
                     }),
             )
