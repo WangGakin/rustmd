@@ -114,7 +114,8 @@ impl EntityInputHandler for Editor {
                 0x30A0..=0x30FF | // Katakana
                 0x3400..=0x4DBF | // CJK Extension A
                 0x4E00..=0x9FFF | // CJK Unified Ideographs
-                0xAC00..=0xD7AF   // Hangul Syllables
+                0xAC00..=0xD7AF | // Hangul Syllables
+                0xFF00..=0xFFEF   // Fullwidth punctuation & symbols
             ));
             let new_end = if is_ime_output {
                 let mut composition_start = cursor;

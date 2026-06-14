@@ -2985,6 +2985,10 @@ impl Editor {
             }
             _ => {
                 if let Some(key_char) = &keystroke.key_char {
+                    if self.ime_marked_range.is_some() {
+                        return;
+                    }
+
                     if key_char == " " {
                         if !self.state.try_insert_space() {
                             return;
