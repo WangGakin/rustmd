@@ -1,0 +1,51 @@
+<h2>实现方案</h2>
+<p class="subtitle">根据你的选择，以下是推荐的技术方案</p>
+
+<div class="mockup">
+  <div class="mockup-header">编辑器布局示意</div>
+  <div class="mockup-body">
+    <div style="display:flex; height:400px; background:#282A36; border:1px solid #44475A; border-radius:4px;">
+      <div style="flex:1; padding:20px; overflow:hidden; display:flex; flex-direction:column;">
+        <div style="display:flex; gap:4px; color:#6272A4; font-size:11px; margin-bottom:8px;">
+          <span>行号区</span>
+          <span style="flex:1;">内容区</span>
+        </div>
+        <div style="color:rgba(248,248,242,0.6); font-size:13px; line-height:1.6; font-family:monospace;">
+          <div style="color:#FF79C6;"># 标题行</div>
+          <div>正文内容...</div>
+          <div> </div>
+          <div style="color:#BD93F9;">- 列表项一</div>
+          <div style="color:#BD93F9;">- 列表项二</div>
+          <div> </div>
+          <div style="opacity:0.3;">...更多内容...</div>
+          <div style="opacity:0.3;">...更多内容...</div>
+          <div style="opacity:0.3;">...更多内容...</div>
+          <div style="opacity:0.3;">...更多内容...</div>
+          <div style="opacity:0.3;">...更多内容...</div>
+          <div style="opacity:0.3;">...更多内容...</div>
+        </div>
+      </div>
+      <div style="width:8px; background:rgba(98,114,164,0.15); border-radius:4px; margin:4px; position:relative;">
+        <div style="width:8px; height:80px; background:rgba(98,114,164,0.5); border-radius:4px; position:absolute; top:20px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>方案：滚动条作为编辑器的内联子元素</h3>
+<p>在 Editor::render() 中，在 line_list 旁边渲染一个滚动条 div。结构上简单直接：</p>
+
+<pre style="background:#1e1f29; padding:12px; border-radius:4px; font-size:12px; color:#f8f8f2; font-family:monospace;">
+div()
+  .size_full()
+  .child(line_list)       // ← 已有的列表
+  .child(scrollbar())     // ← 新增：右侧浮动的滚动条
+</pre>
+
+<h3>数据流</h3>
+<p>
+  <strong>总内容高度</strong> = 已测量行高度之和 + (未测量行数 × 默认行高)<br>
+  <strong>滑块大小</strong> = (视口高度 / 总内容高度) × 轨道高度<br>
+  <strong>滑块位置</strong> = (当前滚动位置 / 总内容高度) × 轨道高度<br>
+  <strong>拖拽 → scroll_by(delta)</strong>
+</p>

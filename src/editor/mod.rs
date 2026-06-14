@@ -2826,7 +2826,7 @@ impl Editor {
         // Mac mode: Ctrl+letter shortcuts
         if is_mac_mode && is_ctrl && !keystroke.modifiers.alt {
             match keystroke.key.as_str() {
-                "a" => {
+                "a" if !keystroke.modifiers.shift => {
                     let new_cursor = self.cursor().move_to_line_start(&self.state.buffer);
                     self.move_cursor(new_cursor, extend);
                     self.scroll_to_cursor_pending = true;
@@ -2989,9 +2989,11 @@ impl Editor {
                         if !self.state.try_insert_space() {
                             return;
                         }
-                    } else {
-                        self.insert_text(key_char);
                     }
+                    // Regular text insertion is handled by WM_CHAR ->
+                    // replace_text_in_range. on_key_down does not insert
+                    // printable characters to avoid the WM_KEYDOWN/WM_CHAR
+                    // double-path conflict that causes IME bugs.
 
                     if key_char == ">" {
                         self.state.maybe_complete_blockquote_marker();

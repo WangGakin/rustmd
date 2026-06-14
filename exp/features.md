@@ -401,6 +401,24 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 | `src/line.rs` | `LineTheme` 新增 `emphasis_color: Rgba`；`build_styled_content()` 颜色选择链新增 `is_bold \|\| is_italic → emphasis_color` |
 | `src/editor/mod.rs` | `Editor::render()` 映射 `theme.emphasis → line_theme.emphasis_color` |
 
+## Mac 模式全选快捷键修复（2026-06-14）
+
+**问题：** Mac 模式下 `Ctrl+Shift+A`（全选）被 Emacs 风格快捷键块拦截，实际行为为"选中到行首"。
+
+**根因：** `src/editor/mod.rs:2827` 的 Mac 模式处理块条件为 `is_mac_mode && is_ctrl && !alt`，匹配所有 `Ctrl+字母` 组合，包括 `Ctrl+Shift+A`。该块的 `"a"` arm 执行 `move_to_line_start()` + `move_cursor(new_cursor, extend=true)`，导致选中从光标到行首而非全选。第 2942 行的全选逻辑（要求 `is_ctrl_shift`）永远收不到事件。
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/mod.rs:2829` | `"a"` 匹配臂增加 `!keystroke.modifiers.shift` 守卫条件 |
+
+**修复效果：**
+- `Ctrl+A`（无 shift）→ 移到行首（Emacs 行为，不变）
+- `Ctrl+Shift+A` → 穿透到全选逻辑，正确执行 `Selection::select_all()`
+
+**经验总结：** Mac 模式下 Emacs 快捷键处理块（line 2827）优先级高于主匹配块（line 2882），如果后续有需要 `Ctrl+Shift` 组合的快捷键，必须在对应 Emacs arm 上加 `!shift` 守卫，否则会被 Emacs 块提前拦截。
+
+---
+
 ## RefCell / Async Task 安全模式汇总
 
 ### 根因

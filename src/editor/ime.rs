@@ -80,41 +80,41 @@ impl EntityInputHandler for Editor {
         }
 
         // ── No composition ──
-        // writ's on_key_down already inserted ASCII chars from KeyDown events.
-        // WM_CHAR for ASCII is a duplicate — skip it.
-        // Non-ASCII text (e.g. Chinese punctuation via WM_CHAR/WM_IME_CHAR)
-        // was NOT inserted by on_key_down, so accept it here.
+        // on_key_down no longer inserts printable characters. All text
+        // insertion (ASCII and non-ASCII) happens here, from WM_CHAR.
         if replacement.is_none() {
-            // ASCII alpha/digit — already handled by on_key_down, skip duplicate
-            if text.len() == 1 && text.as_bytes()[0].is_ascii_alphanumeric() {
+            if text.is_empty() {
                 return;
             }
-            // ASCII punct — same as above, on_key_down already inserted
+            let cursor = self.state.cursor().offset;
+
+            // Space is handled by on_key_down's try_insert_space (which
+            // manages list indentation). WM_CHAR for space is a duplicate.
+            if text == " " {
+                return;
+            }
+
+            // Single ASCII character — direct insertion.
             if text.len() == 1 && text.as_bytes()[0].is_ascii() {
+                let new_end = self.state.buffer.insert(cursor, text, cursor);
+                self.state.selection = Selection::new(new_end, new_end);
+                self.sync_list_state(cx);
+                cx.notify();
                 return;
             }
-            // Non-ASCII text (e.g. Chinese punctuation or IME confirmation)
-            let mut cursor = self.state.cursor().offset;
-            // on_key_down may have inserted the raw ASCII key before the
-            // IME event arrived (e.g. ',' before '，'). Remove it.
-            if cursor > 0 {
-                let prev = self.state.buffer.byte_at(cursor - 1);
-                if prev.is_some_and(|b| b.is_ascii_punctuation()) {
-                    let prev_start = self.state.buffer.prev_char_boundary(cursor);
-                    self.state.buffer.delete(prev_start..cursor, cursor);
-                    cursor = prev_start;
-                }
-            }
-            // Only treat preceding ASCII as unmarked composition text
-            // if the new text looks like IME confirmation output
-            // (CJK ideographs, kana, hangul) rather than direct
-            // input like Chinese punctuation.
+
+            // Non-ASCII or multi-char text.
+            // For CJK/Hangul/fullwidth output, use the unmarked composition
+            // heuristic: scan backwards for ASCII pinyin letters and replace
+            // them. This handles IMEs (e.g. Shouxin) that don't call
+            // replace_and_mark_text_in_range.
             let is_ime_output = text.chars().any(|c| matches!(c as u32,
                 0x3040..=0x309F | // Hiragana
                 0x30A0..=0x30FF | // Katakana
                 0x3400..=0x4DBF | // CJK Extension A
                 0x4E00..=0x9FFF | // CJK Unified Ideographs
-                0xAC00..=0xD7AF   // Hangul Syllables
+                0xAC00..=0xD7AF | // Hangul Syllables
+                0xFF00..=0xFFEF   // Fullwidth punctuation & symbols
             ));
             let new_end = if is_ime_output {
                 let mut composition_start = cursor;
@@ -126,7 +126,7 @@ impl EntityInputHandler for Editor {
                         break;
                     }
                 }
-                if composition_start < cursor && !text.is_empty() {
+                if composition_start < cursor {
                     self.state.buffer.replace(composition_start..cursor, text, composition_start)
                 } else {
                     self.state.buffer.insert(cursor, text, cursor)
@@ -171,15 +171,11 @@ impl EntityInputHandler for Editor {
         let (from, to) = if let Some(r) = range {
             (utf16_to_byte(&full, r.start), utf16_to_byte(&full, r.end))
         } else if let Some(mark) = self.ime_marked_range.clone() {
-            // writ's on_key_down may have inserted extra text AFTER the previous
-            // composition range (e.g. pinyin "a" after "d"). Expand the replace
-            // region to cover everything up to the current cursor.
             (mark.start, cursor.max(mark.end))
         } else {
-            // First composition char — writ already inserted it via key handler.
-            // Replace what writ inserted with the (same) composition text.
-            let before = cursor.saturating_sub(new_len);
-            (before, cursor)
+            // First composition char — on_key_down no longer inserts text,
+            // so insert at cursor directly (empty range = pure insert).
+            (cursor, cursor)
         };
 
         self.ime_marked_range = None;
