@@ -16,7 +16,6 @@ pub struct FileInfo {
     pub path: Option<std::path::PathBuf>,
     pub dirty: bool,
     pub recent_files: Vec<String>,
-    pub recent_files_open: bool,
 }
 
 fn traffic_light(

@@ -105,7 +105,6 @@ fn main() {
                         path: initial_path.clone(),
                         dirty: false,
                         recent_files: rustmd::user_config::recent_files(),
-                        recent_files_open: false,
                     },
                     about_open: false,
                     recent_files_open: false,
@@ -158,7 +157,6 @@ fn open_new_window(cx: &mut App) {
                     path: None,
                     dirty: false,
                     recent_files: rustmd::user_config::recent_files(),
-                    recent_files_open: false,
                 },
                 about_open: false,
                 recent_files_open: false,
@@ -186,7 +184,6 @@ impl Render for RootView {
         self.file_info.dirty = editor.is_dirty();
         let status_info = editor.status_info().clone();
         self.file_info.recent_files = rustmd::user_config::recent_files();
-        self.file_info.recent_files_open = self.recent_files_open;
         let _ = editor;
 
         window_shadow(theme.clone())
