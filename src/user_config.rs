@@ -184,19 +184,23 @@ pub fn add_recent_file(path: &Path) {
     if path_str.is_empty() {
         return;
     }
-    let mut files = RECENT_FILES.lock().unwrap();
-    files.retain(|f| f != &path_str);
-    files.insert(0, path_str);
-    files.truncate(5);
-    // persist to config.json
+    let files = {
+        let mut files = RECENT_FILES.lock().unwrap();
+        files.retain(|f| f != &path_str);
+        files.insert(0, path_str);
+        files.truncate(5);
+        files.clone()
+    };
     let mut cfg = load_config();
-    cfg.recent_files = files.clone();
+    cfg.recent_files = files;
     save_config(&cfg);
 }
 
 pub fn clear_recent_files() {
-    let mut files = RECENT_FILES.lock().unwrap();
-    files.clear();
+    {
+        let mut files = RECENT_FILES.lock().unwrap();
+        files.clear();
+    }
     let mut cfg = load_config();
     cfg.recent_files.clear();
     save_config(&cfg);
