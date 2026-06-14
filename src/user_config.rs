@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use gpui::{Rgba, rgb};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,8 @@ pub struct UserConfig {
     pub code_font: String,
     #[serde(default = "default_font_size")]
     pub font_size_rem: f32,
+    #[serde(default)]
+    pub recent_files: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -45,6 +48,7 @@ impl Default for UserConfig {
             text_font: default_text_font(),
             code_font: default_code_font(),
             font_size_rem: 0.875,
+            recent_files: Vec::new(),
         }
     }
 }
@@ -169,6 +173,37 @@ pub fn save_config(cfg: &UserConfig) {
     if let Ok(json) = serde_json::to_string_pretty(cfg) {
         let _ = std::fs::write(&path, json);
     }
+}
+
+static RECENT_FILES: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
+    Mutex::new(load_config().recent_files)
+});
+
+pub fn add_recent_file(path: &Path) {
+    let path_str = path.to_string_lossy().to_string();
+    if path_str.is_empty() {
+        return;
+    }
+    let mut files = RECENT_FILES.lock().unwrap();
+    files.retain(|f| f != &path_str);
+    files.insert(0, path_str);
+    files.truncate(5);
+    // persist to config.json
+    let mut cfg = load_config();
+    cfg.recent_files = files.clone();
+    save_config(&cfg);
+}
+
+pub fn clear_recent_files() {
+    let mut files = RECENT_FILES.lock().unwrap();
+    files.clear();
+    let mut cfg = load_config();
+    cfg.recent_files.clear();
+    save_config(&cfg);
+}
+
+pub fn recent_files() -> Vec<String> {
+    RECENT_FILES.lock().unwrap().clone()
 }
 
 fn default_font_size() -> f32 {
