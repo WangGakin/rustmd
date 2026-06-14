@@ -252,18 +252,22 @@ impl Render for RootView {
                         },
                     ))
                     .on_action(cx.listener(
-                        |this: &mut RootView, action: &OpenRecentFile, _window, cx| {
+                        |this: &mut RootView, action: &OpenRecentFile, window, cx| {
                             let index = action.0;
                             let files = rustmd::user_config::recent_files();
-                            if let Some(path_str) = files.get(index) {
-                                let path = std::path::PathBuf::from(path_str);
-                                let editor = this.editor.clone();
+                            let Some(path_str) = files.get(index) else {
+                                return;
+                            };
+                            let path = std::path::PathBuf::from(path_str);
+                            let editor = this.editor.clone();
+                            rustmd::file_ops::set_dialog_open(true);
+                            window.defer(cx, move |window, cx| {
                                 let should_open = editor.update(cx, |editor, cx| {
                                     if editor.is_dirty() {
                                         match rustmd::file_ops::confirm_discard() {
                                             rustmd::file_ops::DiscardChoice::Save => {
                                                 editor.save(cx);
-                                                true
+                                                !editor.is_dirty()
                                             }
                                             rustmd::file_ops::DiscardChoice::Cancel => false,
                                             rustmd::file_ops::DiscardChoice::DontSave => true,
@@ -272,14 +276,14 @@ impl Render for RootView {
                                         true
                                     }
                                 });
+                                rustmd::file_ops::set_dialog_open(false);
                                 if should_open {
                                     editor.update(cx, |editor, cx| {
                                         editor.open_file_at(path, cx);
                                     });
+                                    window.dispatch_action(ToggleRecentFiles.boxed_clone(), cx);
                                 }
-                            }
-                            this.recent_files_open = false;
-                            cx.notify();
+                            });
                         },
                     ))
                     .on_action(cx.listener(
