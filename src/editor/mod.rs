@@ -2985,17 +2985,15 @@ impl Editor {
             }
             _ => {
                 if let Some(key_char) = &keystroke.key_char {
-                    if self.ime_marked_range.is_some() {
-                        return;
-                    }
-
                     if key_char == " " {
                         if !self.state.try_insert_space() {
                             return;
                         }
-                    } else {
-                        self.insert_text(key_char);
                     }
+                    // Regular text insertion is handled by WM_CHAR ->
+                    // replace_text_in_range. on_key_down does not insert
+                    // printable characters to avoid the WM_KEYDOWN/WM_CHAR
+                    // double-path conflict that causes IME bugs.
 
                     if key_char == ">" {
                         self.state.maybe_complete_blockquote_marker();
