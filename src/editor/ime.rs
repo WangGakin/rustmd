@@ -174,10 +174,8 @@ impl EntityInputHandler for Editor {
             (mark.start, cursor.max(mark.end))
         } else {
             // First composition char — on_key_down no longer inserts text,
-            // so cursor is at the pre-key position. saturating_sub produces
-            // an empty range (= insert-at-cursor) for the first character.
-            let before = cursor.saturating_sub(new_len);
-            (before, cursor)
+            // so insert at cursor directly (empty range = pure insert).
+            (cursor, cursor)
         };
 
         self.ime_marked_range = None;
