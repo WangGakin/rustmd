@@ -709,6 +709,22 @@ impl Line {
         boundaries.sort();
         boundaries.dedup();
 
+        // Ensure all boundaries are on UTF-8 character boundaries.
+        // While tree-sitter positions are usually char-aligned, some edge
+        // cases (especially with multi-byte non-ASCII text) can produce
+        // mid-char byte positions, causing GPUI's `with_runs` to panic.
+        let len_bytes = self.rope.len_bytes();
+        for b in &mut boundaries {
+            *b = (*b).min(len_bytes);
+            while *b > 0 && *b < len_bytes
+                && self.rope.char_to_byte(self.rope.byte_to_char(*b)) != *b
+            {
+                *b += 1;
+            }
+        }
+        boundaries.sort();
+        boundaries.dedup();
+
         let mut hidden_ranges: Vec<(usize, usize)> = Vec::new();
         let mut style_ranges: Vec<(Range<usize>, &StyledRegion)> = Vec::new();
 
@@ -924,7 +940,6 @@ impl Line {
                 strikethrough,
             });
         }
-
         (display_text, runs, collapsed_regions)
     }
 
@@ -1318,7 +1333,26 @@ impl RenderOnce for Line {
         } else {
             display_text.into()
         };
-        let styled_text = StyledText::new(shared_text).with_runs(runs);
+        let validated_runs = {
+            let mut remaining = shared_text.as_ref();
+            let run_sum: usize = runs.iter().map(|r| r.len).sum();
+            let mut valid = run_sum == shared_text.len();
+            if valid {
+                for run in &runs {
+                    if remaining.get(run.len..).is_none() {
+                        valid = false;
+                        break;
+                    }
+                    remaining = &remaining[run.len..];
+                }
+            }
+            if !valid {
+                vec![self.text_run(shared_text.len(), self.line_font(), self.theme.text_color)]
+            } else {
+                runs
+            }
+        };
+        let styled_text = StyledText::new(shared_text).with_runs(validated_runs);
         let text_layout = styled_text.layout().clone();
 
         let mut line_div = line_base(line_number, max_line_width)
@@ -1430,8 +1464,20 @@ impl RenderOnce for Line {
                             strikethrough: None,
                         };
                         let shared_text: SharedString = line_text.into_owned().into();
+                        let validated_runs = if invisible_run.len != shared_text.len() {
+                            vec![TextRun {
+                                len: shared_text.len(),
+                                font: self.theme.text_font.clone(),
+                                color: gpui::transparent_black(),
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }]
+                        } else {
+                            vec![invisible_run]
+                        };
                         let styled_text =
-                            StyledText::new(shared_text).with_runs(vec![invisible_run]);
+                            StyledText::new(shared_text).with_runs(validated_runs);
                         let text_layout = styled_text.layout().clone();
 
                         let hr_line = div()

@@ -1647,6 +1647,8 @@ pub struct Editor {
     is_selecting: bool,
     /// Y coordinate where scrollbar thumb drag started (None when not dragging).
     scrollbar_drag_start_y: Option<Pixels>,
+    /// True when scrollbar click hasn't yet been classified as drag or page-turn.
+    scrollbar_pending_page_turn: bool,
     /// Path to the file being edited (if any).
     file_path: Option<PathBuf>,
     /// Receiver for file watcher events.
@@ -1711,6 +1713,7 @@ impl Editor {
             in_drag_scroll_zone: false,
             is_selecting: false,
             scrollbar_drag_start_y: None,
+            scrollbar_pending_page_turn: false,
             file_path: None,
             file_watcher_rx: None,
             file_watcher: None,
@@ -3407,6 +3410,7 @@ impl Editor {
         let thumb_top_val = thumb_top;
         let total_h_val = total_h;
         let track_h_val = track_h;
+        let viewport_h_val = viewport_h;
 
         Some(
             div()
@@ -3425,18 +3429,8 @@ impl Editor {
                             window.prevent_default();
 
                             let click_y = f32::from(event.position.y);
-
-                            if click_y >= thumb_top_val && click_y <= thumb_top_val + thumb_h_val {
-                                editor.scrollbar_drag_start_y = Some(px(click_y));
-                            } else {
-                                let thumb_center = thumb_top_val + thumb_h_val / 2.0;
-                                let page_size = px(viewport_h);
-                                if click_y < thumb_center {
-                                    editor.list_state.scroll_by(px(-viewport_h));
-                                } else {
-                                    editor.list_state.scroll_by(page_size);
-                                }
-                            }
+                            editor.scrollbar_drag_start_y = Some(px(click_y));
+                            editor.scrollbar_pending_page_turn = true;
                             cx.notify();
                         },
                     ),
@@ -3454,6 +3448,17 @@ impl Editor {
                             None => return,
                         };
                         let mouse_y = event.event.position.y;
+
+                        if editor.scrollbar_pending_page_turn {
+                            let first_delta =
+                                (f32::from(mouse_y) - f32::from(start_y)).abs();
+                            editor.scrollbar_drag_start_y = Some(mouse_y);
+                            if first_delta > 3.0 {
+                                editor.scrollbar_pending_page_turn = false;
+                            }
+                            return;
+                        }
+
                         let delta_y_px = f32::from(mouse_y) - f32::from(start_y);
 
                         let track_range = track_h_val - thumb_h_val;
@@ -3468,10 +3473,24 @@ impl Editor {
                 ))
                 .on_mouse_up(
                     MouseButton::Left,
-                    cx.listener(|editor, _event: &gpui::MouseUpEvent, _window, cx| {
-                        editor.scrollbar_drag_start_y = None;
-                        cx.notify();
-                    }),
+                    cx.listener(
+                        move |editor, _event: &gpui::MouseUpEvent, _window, cx| {
+                            if editor.scrollbar_pending_page_turn {
+                                editor.scrollbar_pending_page_turn = false;
+                                if let Some(start_y) = editor.scrollbar_drag_start_y {
+                                    let click_y = f32::from(start_y);
+                                    let thumb_center = thumb_top_val + thumb_h_val / 2.0;
+                                    if click_y < thumb_center {
+                                        editor.list_state.scroll_by(px(-viewport_h_val));
+                                    } else {
+                                        editor.list_state.scroll_by(px(viewport_h_val));
+                                    }
+                                }
+                            }
+                            editor.scrollbar_drag_start_y = None;
+                            cx.notify();
+                        },
+                    ),
                 )
                 .bg(track_color)
                 .rounded(px(4.0))
@@ -4035,6 +4054,7 @@ impl Render for Editor {
                     }
                     if editor.scrollbar_drag_start_y.is_some() {
                         editor.scrollbar_drag_start_y = None;
+                        editor.scrollbar_pending_page_turn = false;
                         changed = true;
                     }
                     if changed {
