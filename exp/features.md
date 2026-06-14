@@ -304,6 +304,51 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 
 ---
 
+---
+
+## 历史文件菜单（第十六批 — 2026-06-14）
+
+在标题栏右侧新增 🕐 下拉菜单，记录最近打开的 5 个文件，支持跨会话持久化。
+
+| 功能 | 说明 |
+|------|------|
+| 自动记录 | 打开文件、另存为、`--file` 启动时自动记录 |
+| 快速打开 | 点击历史文件直接打开（dirty 时弹确认框） |
+| 条目格式 | `文件名 — 父目录名` 显示，方便区分同名文件 |
+| 已删除文件 | 灰色显示，点击后报错退出（不崩溃） |
+| 清除历史 | 下拉菜单底部「Clear Recent Files」链接 |
+| 持久化 | 存储在 `config.json` 的 `recent_files` 字段，最多 5 条 |
+| 去重 | 同一文件重复打开自动移到列表最前 |
+
+**涉及文件：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/user_config.rs` | `recent_files: Vec<String>` 字段；`RECENT_FILES` 静态缓存；`add_recent_file()` / `clear_recent_files()` / `recent_files()` |
+| `src/file_ops.rs` | 新增 `OpenRecentFile(usize)`、`ClearRecentFiles` action 结构体 |
+| `src/editor/mod.rs` | 提取 `open_file_at(path, cx)` 方法；在 `open_file`、`save_as` 中调用 `add_recent_file` |
+| `src/title_bar.rs` | `FileInfo.recent_files` 字段；🕐 按钮（空列表时灰色，有文件时显示主题色带 hover）；`ToggleRecentFiles` action |
+| `src/main.rs` | 注册 3 个 action handler；弹窗浮层（跟随 About 浮层模式）；`--file` 启动时记录路径 |
+
+**弹窗 UI 说明：**
+
+```
+┌──────────────────────────┐
+│ notes.md — Desktop       │
+│ README.md — rustmd       │
+│ ————————————————————     │
+│ Clear Recent Files       │
+└──────────────────────────┘
+```
+
+**经验总结：**
+
+1. GPUI 的 `actions!` 宏不支持带数据参数的 action → 用 `#[derive(Action)]` + tuple struct
+2. 下拉弹窗复用 About 浮层的 overlay 模式：全屏透明遮罩 + 绝对定位内容层
+3. 关闭按钮在空列表时仍应保持可点击但视觉淡化（`.text_color(theme.comment)`.without `cursor_pointer`/`hover`）
+4. `OpenRecentFile` handler 需要 `set_dialog_open(true)` + `window.defer()` 包裹 `confirm_discard()`，避免 rfd 嵌套消息循环导致 GPUI RefCell panic
+5. 持久化操作（`load_config` + `save_config`）应放在 Mutex 锁外部，避免 I/O 阻塞其他线程读取最近文件列表
+
 ## RefCell / Async Task 安全模式汇总
 
 ### 根因
