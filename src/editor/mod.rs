@@ -3136,6 +3136,7 @@ impl Editor {
         }
 
         self.file_path = Some(path.clone());
+        crate::user_config::add_recent_file(&path);
         self.state.buffer.mark_clean();
         self.last_save_mtime = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
 
@@ -3146,20 +3147,8 @@ impl Editor {
         cx.notify();
     }
 
-    /// Open a file chosen via file dialog, replacing current content.
-    pub fn open_file(&mut self, cx: &mut Context<Self>) {
-        if self.state.buffer.is_dirty() {
-            match crate::file_ops::confirm_discard() {
-                crate::file_ops::DiscardChoice::Save => self.save(cx),
-                crate::file_ops::DiscardChoice::Cancel => return,
-                crate::file_ops::DiscardChoice::DontSave => {}
-            }
-        }
-
-        let Some(path) = crate::file_ops::pick_open_file() else {
-            return;
-        };
-
+    /// Open a file at the given path, replacing current content.
+    pub fn open_file_at(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
@@ -3177,7 +3166,25 @@ impl Editor {
         self.file_path = Some(path.clone());
         self.watch_file(path.clone(), cx);
 
+        crate::user_config::add_recent_file(&path);
+
         cx.notify();
+    }
+
+    /// Open a file chosen via file dialog, replacing current content.
+    pub fn open_file(&mut self, cx: &mut Context<Self>) {
+        if self.state.buffer.is_dirty() {
+            match crate::file_ops::confirm_discard() {
+                crate::file_ops::DiscardChoice::Save => self.save(cx),
+                crate::file_ops::DiscardChoice::Cancel => return,
+                crate::file_ops::DiscardChoice::DontSave => {}
+            }
+        }
+
+        let Some(path) = crate::file_ops::pick_open_file() else {
+            return;
+        };
+        self.open_file_at(path, cx);
     }
 
     /// Clear the editor to start a new file.
