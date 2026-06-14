@@ -254,6 +254,37 @@ thumb_top = track_h × scroll_offset / total_h
 |------|------|
 | `src/editor/mod.rs` | 新增 `ScrollbarDrag` 标记结构体；`scrollbar_drag_start_y` 字段；`compute_total_content_height` / `compute_scroll_offset_pixels` 辅助方法；`render_scrollbar` 完整渲染逻辑 |
 
+### 10b. 滚动条交互修复 — 延迟判定（2026-06-14）
+
+**问题：** 原实现中 `on_mouse_down` 做二元判定——点击在滑块上 = 拖拽，点击在轨道上 = 翻页。长文章滑块最小仅 20px，几乎不可拖拽；任何微小鼠标偏移都被识别为翻页。
+
+**修复（方案 B）：**
+- `on_mouse_down`：任何点击都标记为潜在拖拽（`scrollbar_pending_page_turn = true`）
+- `on_drag_move`：首次移动超过 3px 阈值 → 切换为真实拖拽模式；未超阈值的移动忽略
+- `on_mouse_up`：若 `pending` 仍为 true（无拖拽移动）→ 根据点击位置相对滑块中心执行翻页
+
+**经验总结：** 拖拽/点击的分类应从 `mousedown` 延迟到 `mouseup`，通过移动距离阈值区分意图。
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/mod.rs` | 新增 `scrollbar_pending_page_turn` 字段；rewrite `on_mouse_down`/`on_drag_move`/`on_mouse_up` 三个回调；main editor `on_mouse_up` 清理新 flag |
+
+### 10c. 滚动条修复 — 中文文本 panic 'invalid text run'（2026-06-14）
+
+**问题：** 打开纯中文 Markdown 文件时 GPUI 在 `text.rs:239` panic `invalid text run`。堆栈指向 `StyledText::new().with_runs()`。
+
+**根因：** `build_styled_content` 中的 `boundaries` 来自 tree-sitter 解析结果。在纯 CJK 文本（每个字符 3 UTF-8 字节）场景下，某个 boundary 落在一个字符的中间字节位置。`str::get(64..)` 要求索引在 UTF-8 字符边界上 → `None` → panic。
+
+**修复：**
+1. **边界规范化**（`build_styled_content`）：`boundaries` 去重后在 rope 上验证每个位置是否为有效 UTF-8 字符边界，非边界的向前调整到下一字符边界
+2. **防御性验证**（所有 `with_runs` 调用前）：逐 run 模拟 GPUI 的验证逻辑，不匹配时用安全 fallback 替代
+
+**经验总结：** tree-sitter 字节位置在特定场景（非 ASCII 文本）下可能不是有效的 UTF-8 边界。需要在渲染层做 boundary 规范化，而不是信任上游数据。
+
+| 文件 | 改动 |
+|------|------|
+| `src/line.rs` | `build_styled_content` 新增 UTF-8 boundary 规范化步骤；主 `with_runs` 调用前添加逐 run 验证 + fallback；分隔线 `with_runs` 调用前同上 |
+
 ---
 
 ## 关闭前未保存确认（第十一批 — 2026-06-10）
