@@ -1,0 +1,28 @@
+<h2>滚动条交互方式</h2>
+<p class="subtitle">拖拽滑块是基本的，还需要哪些点击行为？</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="track-click" onclick="toggleSelect(this)">
+    <div class="letter">1</div>
+    <div class="content">
+      <h3>点击轨道翻页</h3>
+      <p>点击滑块上/下方的轨道区域，向上/下翻一页。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="arrows" onclick="toggleSelect(this)">
+    <div class="letter">2</div>
+    <div class="content">
+      <h3>上下箭头按钮</h3>
+      <p>滚动条两端有 ▲ ▼ 按钮，点击逐行滚动。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="middle-click" onclick="toggleSelect(this)">
+    <div class="letter">3</div>
+    <div class="content">
+      <h3>中键点击跳转</h3>
+      <p>鼠标中键点击轨道任意位置，滑块跳转到点击处。</p>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:20px;" class="subtitle">可多选。默认行为：拖拽滑块 + 点击轨道翻页就够了？</p>

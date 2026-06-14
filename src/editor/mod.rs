@@ -2826,7 +2826,7 @@ impl Editor {
         // Mac mode: Ctrl+letter shortcuts
         if is_mac_mode && is_ctrl && !keystroke.modifiers.alt {
             match keystroke.key.as_str() {
-                "a" => {
+                "a" if !keystroke.modifiers.shift => {
                     let new_cursor = self.cursor().move_to_line_start(&self.state.buffer);
                     self.move_cursor(new_cursor, extend);
                     self.scroll_to_cursor_pending = true;

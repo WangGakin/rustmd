@@ -1,0 +1,36 @@
+<h2>滚动条样式</h2>
+<p class="subtitle">选择你喜欢的色彩和宽度</p>
+
+<div class="options">
+  <div class="option" data-choice="theme" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>主题色 + 中等宽度</h3>
+      <p>轨道半透明，滑块用 <span style="color:#BD93F9;">purple</span> 主题色。宽度 12px，圆角。现代编辑器风格。</p>
+      <div style="display:flex; margin-top: 8px;">
+        <div style="width:12px; height:80px; background:rgba(189,147,249,0.3); border-radius:6px; margin-right:8px;"></div>
+        <div style="width:3px; height:80px; background:rgba(189,147,249,0.15); border-radius:2px; margin-right:8px;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="subtle" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>低对比度窄版</h3>
+      <p>滑块用 <span style="color:#6272A4;">comment</span> 色，8px 宽，简约不抢眼。</p>
+      <div style="display:flex; margin-top: 8px;">
+        <div style="width:8px; height:80px; background:rgba(98,114,164,0.4); border-radius:4px; margin-right:8px;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="option" data-choice="legacy" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>经典宽版</h3>
+      <p>传统 Windows 风格，14px 宽，轨道背景明显，滑块用 foreground 色。</p>
+      <div style="display:flex; margin-top: 8px;">
+        <div style="width:14px; height:80px; background:rgba(248,248,242,0.15); border-radius:7px;"></div>
+      </div>
+    </div>
+  </div>
+</div>
