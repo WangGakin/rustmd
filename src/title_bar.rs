@@ -1,4 +1,4 @@
-use gpui::{Action, App, ElementId, Fill, MouseButton, div, prelude::*, rems};
+use gpui::{Action, App, ElementId, Fill, MouseButton, div, prelude::*, px, rems};
 use raw_window_handle::RawWindowHandle;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
@@ -8,9 +8,15 @@ use crate::editor::EditorTheme;
 use crate::menu;
 use crate::window::{CloseWindow, MinimizeWindow, ZoomWindow};
 
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct ToggleRecentFiles;
+
 pub struct FileInfo {
     pub path: Option<std::path::PathBuf>,
     pub dirty: bool,
+    pub recent_files: Vec<String>,
+    pub recent_files_open: bool,
 }
 
 fn traffic_light(
@@ -48,6 +54,9 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
     } else {
         file_name
     };
+
+    let has_recent = !file_info.recent_files.is_empty();
+
     div()
         .id("title-bar")
         .w_full()
@@ -83,7 +92,6 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                                 }
                             }
                         })
-                        // Invisible spacer to give height
                         .child(
                             div()
                                 .whitespace_nowrap()
@@ -91,7 +99,6 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                                 .invisible()
                                 .child(title.clone()),
                         )
-                        // Actual text with ellipsis
                         .child(
                             div()
                                 .absolute()
@@ -110,7 +117,24 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                 .flex_shrink_0()
                 .flex()
                 .flex_row()
+                .items_center()
                 .gap(rems(0.5))
+                .child({
+                    let action = ToggleRecentFiles.boxed_clone();
+                    div()
+                        .id("recent-files-btn")
+                        .px(px(6.0))
+                        .py(px(3.0))
+                        .text_color(if has_recent { theme.foreground } else { theme.comment })
+                        .rounded(px(3.0))
+                        .when(has_recent, |this| {
+                            this.cursor_pointer().hover(|s| s.bg(theme.selection))
+                        })
+                        .child("\u{1F552}")
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        })
+                })
                 .child(traffic_light(
                     "minimize-button",
                     theme.orange,

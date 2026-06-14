@@ -101,6 +101,8 @@ fn main() {
                     file_info: FileInfo {
                         path: initial_path.clone(),
                         dirty: false,
+                        recent_files: Vec::new(),
+                        recent_files_open: false,
                     },
                     about_open: false,
                 })
@@ -151,6 +153,8 @@ fn open_new_window(cx: &mut App) {
                 file_info: FileInfo {
                     path: None,
                     dirty: false,
+                    recent_files: Vec::new(),
+                    recent_files_open: false,
                 },
                 about_open: false,
             })
