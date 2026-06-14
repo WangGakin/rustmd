@@ -2,11 +2,19 @@ use std::path::PathBuf;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use gpui::actions;
+use gpui::{actions, Action};
 
 use crate::config::Config;
 
 actions!(file, [NewFile, OpenFile, Save, SaveAs]);
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct OpenRecentFile(pub usize);
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct ClearRecentFiles;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FileOp {
