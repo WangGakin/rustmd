@@ -349,6 +349,27 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 4. `OpenRecentFile` handler 需要 `set_dialog_open(true)` + `window.defer()` 包裹 `confirm_discard()`，避免 rfd 嵌套消息循环导致 GPUI RefCell panic
 5. 持久化操作（`load_config` + `save_config`）应放在 Mutex 锁外部，避免 I/O 阻塞其他线程读取最近文件列表
 
+---
+
+## 强调文字颜色（第十七批 — 2026-06-14）
+
+**版本：** 0.2.2 → 0.2.3
+
+粗体（`**bold**`）和斜体（`*italic*`）文本现在使用独立的强调色，与正文区分。颜色可通过 `config.json` 的 `theme.emphasis` 字段定制。
+
+**默认配色：** Dracula `#F1FA8C`（黄），Nord `#EBCB8B`（黄）
+
+**颜色优先级：** `strikethrough > checkbox > link > code_highlight > inline_code > **emphasis** > text_color`
+
+标题不受影响，保持原有正文色。
+
+| 文件 | 改动 |
+|------|------|
+| `src/editor/theme.rs` | `EditorTheme` 新增 `emphasis: Rgba` 字段 + Default 值 |
+| `src/user_config.rs` | `SerializedTheme` 新增 `emphasis: String` + preset 默认值 + `to_editor_theme`/`from_editor_theme` 序列化 |
+| `src/line.rs` | `LineTheme` 新增 `emphasis_color: Rgba`；`build_styled_content()` 颜色选择链新增 `is_bold \|\| is_italic → emphasis_color` |
+| `src/editor/mod.rs` | `Editor::render()` 映射 `theme.emphasis → line_theme.emphasis_color` |
+
 ## RefCell / Async Task 安全模式汇总
 
 ### 根因

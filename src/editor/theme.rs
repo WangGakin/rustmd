@@ -31,6 +31,7 @@ pub struct EditorTheme {
     pub cyan: Rgba,
     pub purple: Rgba,
     pub pink: Rgba,
+    pub emphasis: Rgba,
 }
 
 impl EditorTheme {
@@ -84,6 +85,7 @@ impl Default for EditorTheme {
             cyan: rgb(0x8BE9FD),
             purple: rgb(0xBD93F9),
             pink: rgb(0xFF79C6),
+            emphasis: rgb(0xF1FA8C),
         }
     }
 }

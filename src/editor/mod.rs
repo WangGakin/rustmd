@@ -3589,6 +3589,7 @@ impl Render for Editor {
             fence_lang_color: theme.green,
             checkbox_unchecked_color: theme.orange,
             checkbox_checked_color: theme.green,
+            emphasis_color: theme.emphasis,
             text_font: font(&self.config.text_font),
             code_font,
             monospace_char_width,

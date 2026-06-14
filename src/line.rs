@@ -164,6 +164,7 @@ pub struct LineTheme {
     pub fence_lang_color: Rgba,
     pub checkbox_unchecked_color: Rgba,
     pub checkbox_checked_color: Rgba,
+    pub emphasis_color: Rgba,
     pub text_font: Font,
     pub code_font: Font,
     /// Width of a single monospace character in the code font.
@@ -889,6 +890,8 @@ impl Line {
                 highlight_color.into()
             } else if is_code && !is_code_block {
                 self.theme.code_color.into()
+            } else if is_bold || is_italic {
+                self.theme.emphasis_color.into()
             } else {
                 self.theme.text_color.into()
             };

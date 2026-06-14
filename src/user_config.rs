@@ -34,6 +34,7 @@ pub struct SerializedTheme {
     pub cyan: String,
     pub purple: String,
     pub pink: String,
+    pub emphasis: String,
 }
 
 pub enum Preset {
@@ -74,6 +75,7 @@ impl SerializedTheme {
             cyan: "#8BE9FD".into(),
             purple: "#BD93F9".into(),
             pink: "#FF79C6".into(),
+            emphasis: "#F1FA8C".into(),
         }
     }
 
@@ -90,6 +92,7 @@ impl SerializedTheme {
             cyan: "#88C0D0".into(),
             purple: "#B48EAD".into(),
             pink: "#BF88BC".into(),
+            emphasis: "#EBCB8B".into(),
         }
     }
 
@@ -106,6 +109,7 @@ impl SerializedTheme {
             cyan: parse_hex(&self.cyan),
             purple: parse_hex(&self.purple),
             pink: parse_hex(&self.pink),
+            emphasis: parse_hex(&self.emphasis),
         }
     }
 
@@ -122,6 +126,7 @@ impl SerializedTheme {
             cyan: to_hex(theme.cyan),
             purple: to_hex(theme.purple),
             pink: to_hex(theme.pink),
+            emphasis: to_hex(theme.emphasis),
         }
     }
 }
