@@ -67,7 +67,7 @@ impl RenderSnapshot {
     /// Compute LineMarkers for a specific line on demand. O(log n) binary search + marker extraction.
     pub fn line_markers(&self, line_idx: usize) -> LineMarkers {
         let range = self.line_byte_range(line_idx);
-        let markers = markers_at_from_infos(&self.parsed.nodes, &self.rope, range.start, range.end);
+        let markers = markers_at_from_infos(&self.parsed.nodes, &self.parsed.continuation_markers, &self.rope, range.start, range.end);
         let in_checked_task = is_line_in_checked_task(&self.parsed.nodes, range.start);
         let in_code_block = is_line_in_code_block(&self.parsed.nodes, range.start);
         LineMarkers {
@@ -230,7 +230,7 @@ impl BufferContent {
         self.parsed = Rc::new(
             self.tree
                 .as_ref()
-                .map(|t| collect_node_infos(&t.block_tree().root_node()))
+                .map(|t| collect_node_infos(&t.block_tree().root_node(), &self.text))
                 .unwrap_or_default(),
         );
 
@@ -586,7 +586,7 @@ impl BufferContent {
     /// Compute LineMarkers for a specific line on demand.
     pub fn line_markers(&self, line_idx: usize) -> LineMarkers {
         let range = self.line_byte_range(line_idx);
-        let markers = markers_at_from_infos(&self.parsed.nodes, &self.text, range.start, range.end);
+        let markers = markers_at_from_infos(&self.parsed.nodes, &self.parsed.continuation_markers, &self.text, range.start, range.end);
         let in_checked_task = is_line_in_checked_task(&self.parsed.nodes, range.start);
         let in_code_block = is_line_in_code_block(&self.parsed.nodes, range.start);
         LineMarkers {
