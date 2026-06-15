@@ -201,6 +201,9 @@ pub struct BufferContent {
     inline_styles: Rc<Vec<StyledRegion>>,
     /// Version counter, incremented on each edit. Used by Editor to detect changes.
     version: u64,
+    /// Lazy UTF-16 offset cache: (version, cumulative_utf16_per_line).
+    /// None initially, rebuilt on first use when version changes.
+    utf16_cache: Option<(u64, Vec<u32>)>,
 }
 
 impl BufferContent {
@@ -214,6 +217,7 @@ impl BufferContent {
             parsed: Rc::new(ParsedNodes::default()),
             inline_styles: Rc::new(Vec::new()),
             version: NEXT_VERSION.fetch_add(1, Ordering::Relaxed),
+            utf16_cache: None,
         }
     }
 
@@ -492,6 +496,82 @@ impl BufferContent {
 
     pub fn rope(&self) -> &Rope {
         &self.text
+    }
+
+    /// Ensure the UTF-16 offset cache is up to date.
+    /// Call this before `utf16_offset_from_byte` / `byte_offset_from_utf16`.
+    pub fn ensure_utf16_cache(&mut self) {
+        let rebuild = self
+            .utf16_cache
+            .as_ref()
+            .map_or(true, |(v, _)| *v != self.version);
+        if !rebuild {
+            return;
+        }
+        let mut offsets = Vec::with_capacity(self.text.len_lines());
+        let mut total: u32 = 0;
+        for line_idx in 0..self.text.len_lines() {
+            let line = self.text.line(line_idx);
+            for ch in line.chars() {
+                total += ch.len_utf16() as u32;
+            }
+            offsets.push(total);
+        }
+        self.utf16_cache = Some((self.version, offsets));
+    }
+
+    /// Convert a byte offset to a UTF-16 code unit offset using the cached per-line prefix sums.
+    /// Requires `ensure_utf16_cache` to have been called first.
+    pub fn utf16_offset_from_byte(&self, byte_offset: usize) -> usize {
+        let (_, offsets) = self.utf16_cache.as_ref().expect("utf16_cache not initialized; call ensure_utf16_cache first");
+        let line_idx = self.byte_to_line(byte_offset);
+        let prefix = if line_idx > 0 {
+            offsets[line_idx - 1] as usize
+        } else {
+            0
+        };
+        let line_start = self.line_to_byte(line_idx);
+        let char_start = self.text.byte_to_char(line_start);
+        let char_end = self.text.byte_to_char(byte_offset.min(self.text.len_bytes()));
+        let mut utf16 = 0u32;
+        for ci in char_start..char_end {
+            utf16 += self.text.char(ci).len_utf16() as u32;
+        }
+        prefix + utf16 as usize
+    }
+
+    /// Convert a UTF-16 code unit offset to a byte offset using the cached per-line prefix sums.
+    /// Requires `ensure_utf16_cache` to have been called first.
+    pub fn byte_offset_from_utf16(&self, utf16_offset: usize) -> usize {
+        let (_, offsets) = self.utf16_cache.as_ref().expect("utf16_cache not initialized; call ensure_utf16_cache first");
+        if utf16_offset == 0 {
+            return 0;
+        }
+        let line_idx = match offsets.binary_search(&(utf16_offset as u32)) {
+            Ok(idx) => idx + 1,
+            Err(idx) => idx,
+        };
+        if line_idx >= self.text.len_lines() {
+            return self.text.len_bytes();
+        }
+        let line_start = self.line_to_byte(line_idx);
+        let prefix = if line_idx > 0 {
+            offsets[line_idx - 1] as usize
+        } else {
+            0
+        };
+        let remaining = utf16_offset - prefix;
+        let line = self.text.line(line_idx);
+        let mut char_utf16: usize = 0;
+        let mut byte_in_line: usize = 0;
+        for ch in line.chars() {
+            if char_utf16 >= remaining {
+                return line_start + byte_in_line;
+            }
+            char_utf16 += ch.len_utf16();
+            byte_in_line += ch.len_utf8();
+        }
+        line_start + line.len_bytes()
     }
 
     pub fn tree(&self) -> Option<&MarkdownTree> {
@@ -856,6 +936,7 @@ impl FromStr for Buffer {
             parsed: Rc::new(ParsedNodes::default()),
             inline_styles: Rc::new(Vec::new()),
             version: NEXT_VERSION.fetch_add(1, Ordering::Relaxed),
+            utf16_cache: None,
         };
 
         content.update_caches();

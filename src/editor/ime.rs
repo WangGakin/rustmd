@@ -11,47 +11,42 @@ pub fn content_from_file(path: &str) -> String {
     }
 }
 
-fn byte_to_utf16(s: &str, byte_offset: usize) -> usize {
-    let offset = byte_offset.min(s.len());
-    s[..offset].encode_utf16().count()
-}
-
-fn utf16_to_byte(s: &str, utf16_offset: usize) -> usize {
-    let mut count = 0;
-    for (i, ch) in s.char_indices() {
-        if count >= utf16_offset { return i; }
-        count += ch.len_utf16();
-    }
-    s.len()
-}
-
 use crate::editor::Editor;
 
 impl EntityInputHandler for Editor {
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
         let offset = self.state.cursor().offset;
-        let full = self.state.buffer.text();
-        let offset = offset.min(full.len());
-        let u = byte_to_utf16(&full, offset);
+        self.state.buffer.ensure_utf16_cache();
+        let u = self.state.buffer.utf16_offset_from_byte(offset);
         Some(UTF16Selection { range: u..u, reversed: false })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         if let Some(ref mark) = self.ime_marked_range {
-            let full = self.state.buffer.text();
-            let s = mark.start.min(full.len());
-            let e = mark.end.min(full.len());
-            Some(byte_to_utf16(&full, s)..byte_to_utf16(&full, e))
+            let rope = self.state.buffer.rope();
+            let to_utf16 = |byte_offset: usize| -> usize {
+                let byte_offset = byte_offset.min(rope.len_bytes());
+                let char_idx = rope.byte_to_char(byte_offset);
+                let mut utf16: usize = 0;
+                for ci in 0..char_idx {
+                    utf16 += rope.char(ci).len_utf16();
+                }
+                utf16
+            };
+            let s = mark.start;
+            let e = mark.end.min(rope.len_bytes());
+            Some(to_utf16(s)..to_utf16(e))
         } else {
             None
         }
     }
 
     fn text_for_range(&mut self, r: Range<usize>, _: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
-        let full = self.state.buffer.text();
-        let a = utf16_to_byte(&full, r.start);
-        let b = utf16_to_byte(&full, r.end);
-        if a <= full.len() && b <= full.len() { Some(full[a..b].to_string()) } else { None }
+        self.state.buffer.ensure_utf16_cache();
+        let a = self.state.buffer.byte_offset_from_utf16(r.start);
+        let b = self.state.buffer.byte_offset_from_utf16(r.end);
+        let len = self.state.buffer.len_bytes();
+        if a <= len && b <= len { Some(self.state.buffer.slice_cow(a..b).into_owned()) } else { None }
     }
 
     fn replace_text_in_range(&mut self, replacement: Option<Range<usize>>, text: &str, _w: &mut Window, cx: &mut Context<Self>) {
@@ -143,9 +138,9 @@ impl EntityInputHandler for Editor {
         // Explicit replacement range (rare for WM_CHAR)
         if let Some(r) = replacement {
             self.ime_marked_range = None;
-            let full = self.state.buffer.text();
-            let a = utf16_to_byte(&full, r.start);
-            let b = utf16_to_byte(&full, r.end);
+            self.state.buffer.ensure_utf16_cache();
+            let a = self.state.buffer.byte_offset_from_utf16(r.start);
+            let b = self.state.buffer.byte_offset_from_utf16(r.end);
             let new_end = self.state.buffer.replace(a..b, text, a);
             self.state.selection = Selection::new(new_end, new_end);
             self.sync_list_state(cx);
@@ -154,7 +149,6 @@ impl EntityInputHandler for Editor {
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, _w: &mut Window, cx: &mut Context<Self>) {
-        let full = self.state.buffer.text();
         let new_len = new.len();
         // IME cancellation: empty composition string means IME was aborted
         if new_len == 0 {
@@ -169,7 +163,8 @@ impl EntityInputHandler for Editor {
         let cursor = self.state.cursor().offset;
 
         let (from, to) = if let Some(r) = range {
-            (utf16_to_byte(&full, r.start), utf16_to_byte(&full, r.end))
+            self.state.buffer.ensure_utf16_cache();
+            (self.state.buffer.byte_offset_from_utf16(r.start), self.state.buffer.byte_offset_from_utf16(r.end))
         } else if let Some(mark) = self.ime_marked_range.clone() {
             (mark.start, cursor.max(mark.end))
         } else {
@@ -188,14 +183,14 @@ impl EntityInputHandler for Editor {
 
     fn unmark_text(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
         if let Some(mark) = self.ime_marked_range.take() {
-            let full = self.state.buffer.text();
-            if mark.end <= full.len() {
-                let marked_text = &full[mark.start..mark.end];
+            let mark_end = mark.end.min(self.state.buffer.len_bytes());
+            if mark.start < mark_end {
+                let marked_text = self.state.buffer.slice_cow(mark.start..mark_end);
                 // Only delete if the marked text is still ASCII letters (pinyin).
                 // If it contains non-ASCII, it was likely already replaced by
                 // confirmation text and we must not delete it.
                 if !marked_text.is_empty() && marked_text.bytes().all(|b| b.is_ascii_alphabetic()) {
-                    self.state.buffer.delete(mark.clone(), mark.end);
+                    self.state.buffer.delete(mark.clone(), mark_end);
                     self.state.selection = Selection::new(mark.start, mark.start);
                 }
             }
