@@ -504,7 +504,7 @@ impl BufferContent {
         let rebuild = self
             .utf16_cache
             .as_ref()
-            .map_or(true, |(v, _)| *v != self.version);
+            .is_none_or(|(v, _)| *v != self.version);
         if !rebuild {
             return;
         }

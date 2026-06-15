@@ -50,7 +50,6 @@ use crate::paste::{PasteContext, transform_paste};
 use crate::status_bar::StatusBarInfo;
 
 /// Context about the line at the cursor, used by smart editing actions.
-
 mod state;
 pub use state::*;
 
@@ -209,9 +208,6 @@ impl Editor {
         self.is_primary = is_primary;
     }
 
-    /// Get a render snapshot of the current buffer state.
-    /// Useful for capturing state before agent edits.
-
     /// Get the file path this editor is editing, if any.
     pub fn file_path(&self) -> Option<&PathBuf> {
         self.file_path.as_ref()
@@ -296,12 +292,6 @@ impl Editor {
     }
 
 
-
-    /// Set up file watching for external changes.
-    /// When the file changes externally, the buffer will be reloaded.
-    /// If the file doesn't exist yet, watches the parent directory for its creation.
-
-    /// Reload the file from disk, replacing buffer contents.
 
     /// Returns the buffer contents as a string.
     pub fn text(&self) -> String {
@@ -577,10 +567,6 @@ impl Editor {
 
         true
     }
-
-    /// Render the autocomplete popup if active.
-
-
 
     /// Accept the currently selected autocomplete suggestion.
     /// Returns true if a suggestion was accepted.
@@ -1278,28 +1264,6 @@ impl Editor {
         self.state.selection = Selection::new(0, 0);
         cx.notify();
     }
-
-    /// Returns true if the buffer has unsaved changes.
-
-    /// Mark the buffer as clean (no unsaved changes).
-
-    /// Save the buffer to the current file path, or prompt Save As if no path.
-
-    /// Save the buffer to a new path chosen via file dialog.
-
-    /// Open a file at the given path, replacing current content.
-
-    /// Open a file chosen via file dialog, replacing current content.
-
-    /// Clear the editor to start a new file.
-
-    /// Returns true if there are actions to undo.
-
-    /// Returns true if there are actions to redo.
-
-    /// Undo the last action.
-
-    /// Redo the last undone action.
 
     /// Execute an editor action programmatically.
     ///
