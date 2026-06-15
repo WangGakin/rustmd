@@ -328,7 +328,7 @@ impl BufferContent {
             self.text.insert(char_offset, &new_marker);
         }
 
-        self.tree = self.parser.parse_rope(&self.text, None);
+        self.tree = self.parser.parse_rope(&self.text, self.tree.as_ref());
         true
     }
 
