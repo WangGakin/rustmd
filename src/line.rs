@@ -174,6 +174,28 @@ pub struct LineTheme {
     pub line_height: gpui::Rems,
 }
 
+/// Parameters for constructing a [`Line`], grouping the 18 constructor arguments
+/// into a single struct to improve readability and reduce clippy warnings.
+pub struct LineParams {
+    pub line: LineMarkers,
+    pub rope: Rope,
+    pub cursor_offset: usize,
+    pub inline_styles: Vec<StyledRegion>,
+    pub theme: LineTheme,
+    pub selection_range: Option<Range<usize>>,
+    pub code_highlights: Vec<(HighlightSpan, Rgba)>,
+    pub base_path: Option<PathBuf>,
+    pub github_ref_ranges: Vec<Range<usize>>,
+    pub hovered_ref_range: Option<Range<usize>>,
+    pub input_blocked: bool,
+    pub max_line_width: Option<Pixels>,
+    pub line_background: Option<Rgba>,
+    pub inline_highlight_ranges: Vec<Range<usize>>,
+    pub inline_highlight_color: Option<Rgba>,
+    pub show_cursor: bool,
+    pub cursor_screen_pos: Option<Rc<RefCell<CursorScreenPosition>>>,
+}
+
 #[derive(IntoElement)]
 pub struct Line {
     line: LineMarkers,
@@ -212,51 +234,32 @@ pub struct Line {
 }
 
 impl Line {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        line: LineMarkers,
-        rope: Rope,
-        cursor_offset: usize,
-        inline_styles: Vec<StyledRegion>,
-        theme: LineTheme,
-        selection_range: Option<Range<usize>>,
-        code_highlights: Vec<(HighlightSpan, Rgba)>,
-        base_path: Option<PathBuf>,
-        github_ref_ranges: Vec<Range<usize>>,
-        hovered_ref_range: Option<Range<usize>>,
-        input_blocked: bool,
-        max_line_width: Option<Pixels>,
-        line_background: Option<Rgba>,
-        inline_highlight_ranges: Vec<Range<usize>>,
-        inline_highlight_color: Option<Rgba>,
-        show_cursor: bool,
-        cursor_screen_pos: Option<Rc<RefCell<CursorScreenPosition>>>,
-    ) -> Self {
+    pub fn new(params: LineParams) -> Self {
         let substitution = {
-            let s = line.substitution_rope(&rope);
+            let s = params.line.substitution_rope(&params.rope);
             if s.is_empty() { None } else { Some(s) }
         };
         Self {
-            line,
-            rope,
-            cursor_offset,
-            inline_styles,
-            theme,
-            selection_range,
-            code_highlights,
-            base_path,
+            line: params.line,
+            rope: params.rope,
+            cursor_offset: params.cursor_offset,
+            inline_styles: params.inline_styles,
+            theme: params.theme,
+            selection_range: params.selection_range,
+            code_highlights: params.code_highlights,
+            base_path: params.base_path,
             substitution,
             truncate_width: None,
             prefix: None,
-            github_ref_ranges,
-            hovered_ref_range,
-            input_blocked,
-            max_line_width,
-            line_background,
-            inline_highlight_ranges,
-            inline_highlight_color,
-            show_cursor,
-            cursor_screen_pos,
+            github_ref_ranges: params.github_ref_ranges,
+            hovered_ref_range: params.hovered_ref_range,
+            input_blocked: params.input_blocked,
+            max_line_width: params.max_line_width,
+            line_background: params.line_background,
+            inline_highlight_ranges: params.inline_highlight_ranges,
+            inline_highlight_color: params.inline_highlight_color,
+            show_cursor: params.show_cursor,
+            cursor_screen_pos: params.cursor_screen_pos,
         }
     }
 

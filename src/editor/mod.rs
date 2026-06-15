@@ -51,7 +51,7 @@ use crate::inline::{
     NakedUrl, StyledRegion,
     detect_naked_urls,
 };
-use crate::line::{Line, LineTheme};
+use crate::line::{Line, LineParams, LineTheme};
 use crate::paste::{PasteContext, transform_paste};
 use crate::key_mode::KeyMode;
 
@@ -1357,7 +1357,7 @@ impl EditorState {
         }
 
         // Sort by offset descending so we can modify without invalidating earlier offsets
-        checkboxes_to_toggle.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        checkboxes_to_toggle.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
 
         // Toggle each checkbox
         for (offset, _currently_checked) in &checkboxes_to_toggle {
@@ -2619,6 +2619,7 @@ impl Editor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn visual_cross_line(
         &mut self,
         target_line_idx: usize,
@@ -3745,37 +3746,37 @@ impl Render for Editor {
                         })
                         .collect();
 
-                    Line::new(
-                        line_markers,
-                        snap.rope.clone(),
-                        if block_input {
+                    Line::new(LineParams {
+                        line: line_markers,
+                        rope: snap.rope.clone(),
+                        cursor_offset: if block_input {
                             usize::MAX
                         } else {
                             editing_cursor_offset
                         },
                         inline_styles,
-                        line_theme_for_list.clone(),
-                        if block_input {
+                        theme: line_theme_for_list.clone(),
+                        selection_range: if block_input {
                             None
                         } else {
                             selection_range.clone()
                         },
                         code_highlights,
-                        base_path.clone(),
-                        Vec::new(), // no github refs
-                        None,       // no hovered ref
-                        block_input || input_blocked,
+                        base_path: base_path.clone(),
+                        github_ref_ranges: Vec::new(),
+                        hovered_ref_range: None,
+                        input_blocked: block_input || input_blocked,
                         max_line_width,
                         line_background,
                         inline_highlight_ranges,
                         inline_highlight_color,
-                        if block_input {
+                        show_cursor: if block_input {
                             false
                         } else {
                             show_cursor_visual
                         },
-                        csp,
-                    )
+                        cursor_screen_pos: csp,
+                    })
                 };
 
                 let extra_styles = Vec::new();
