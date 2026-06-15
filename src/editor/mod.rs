@@ -233,13 +233,15 @@ impl Editor {
         for line_idx in start_line..end_line.min(snapshot.line_count()) {
             let line = snapshot.line_markers(line_idx);
             let line_range = line.range.clone();
-            let line_text = snapshot
-                .rope
-                .slice(
-                    snapshot.rope.byte_to_char(line_range.start)
-                        ..snapshot.rope.byte_to_char(line_range.end),
-                )
-                .to_string();
+            let line_slice = snapshot.rope.byte_slice(line_range.clone());
+            let line_text: std::borrow::Cow<'_, str> = line_slice
+                .as_str()
+                .map(std::borrow::Cow::Borrowed)
+                .unwrap_or_else(|| {
+                    let char_start = snapshot.rope.byte_to_char(line_range.start);
+                    let char_end = snapshot.rope.byte_to_char(line_range.end);
+                    std::borrow::Cow::Owned(snapshot.rope.slice(char_start..char_end).to_string())
+                });
 
             let inline_styles = snapshot.inline_styles_for_line(line_idx);
 

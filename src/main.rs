@@ -100,15 +100,19 @@ fn main() {
                     editor.start_cursor_blink(handle, cx);
                 });
                 window.focus(&editor.read(cx).focus_handle(cx));
-                cx.new(|_cx| RootView {
-                    editor,
-                    file_info: FileInfo {
-                        path: initial_path.clone(),
-                        dirty: false,
-                        recent_files: rustmd::user_config::recent_files(),
-                    },
-                    about_open: false,
-                    recent_files_open: false,
+                cx.new(|_cx| {
+                    let files = rustmd::user_config::recent_files();
+                    RootView {
+                        editor,
+                        file_info: FileInfo {
+                            path: initial_path.clone(),
+                            dirty: false,
+                            recent_files: files.clone(),
+                        },
+                        about_open: false,
+                        recent_files_open: false,
+                        recent_files: files,
+                    }
                 })
             },
         )
@@ -152,15 +156,19 @@ fn open_new_window(cx: &mut App) {
                 editor.start_cursor_blink(handle, cx);
             });
             window.focus(&editor.read(cx).focus_handle(cx));
-            cx.new(|_cx| RootView {
-                editor,
-                file_info: FileInfo {
-                    path: None,
-                    dirty: false,
-                    recent_files: rustmd::user_config::recent_files(),
-                },
-                about_open: false,
-                recent_files_open: false,
+            cx.new(|_cx| {
+                let files = rustmd::user_config::recent_files();
+                RootView {
+                    editor,
+                    file_info: FileInfo {
+                        path: None,
+                        dirty: false,
+                        recent_files: files.clone(),
+                    },
+                    about_open: false,
+                    recent_files_open: false,
+                    recent_files: files,
+                }
             })
         },
     )
@@ -172,6 +180,7 @@ struct RootView {
     file_info: FileInfo,
     about_open: bool,
     recent_files_open: bool,
+    recent_files: Vec<String>,
 }
 
 impl Render for RootView {
@@ -184,7 +193,13 @@ impl Render for RootView {
         self.file_info.path = editor.file_path().cloned();
         self.file_info.dirty = editor.is_dirty();
         let status_info = editor.status_info().clone();
-        self.file_info.recent_files = rustmd::user_config::recent_files();
+        self.file_info.recent_files.clone_from(&self.recent_files);
+
+        // Only refresh from global state when the popup is open (user-initiated action).
+        // On idle frames we use the cached copy to avoid Mutex lock + Vec clone.
+        if self.recent_files_open {
+            self.recent_files = rustmd::user_config::recent_files();
+        }
         let _ = editor;
 
         window_shadow(theme.clone())
@@ -251,8 +266,7 @@ impl Render for RootView {
                     .on_action(cx.listener(
                         |this: &mut RootView, action: &OpenRecentFile, window, cx| {
                             let index = action.0;
-                            let files = rustmd::user_config::recent_files();
-                            let Some(path_str) = files.get(index) else {
+                            let Some(path_str) = this.recent_files.get(index) else {
                                 return;
                             };
                             let path = std::path::PathBuf::from(path_str);
@@ -278,6 +292,7 @@ impl Render for RootView {
                                     editor.update(cx, |editor, cx| {
                                         editor.open_file_at(path, cx);
                                     });
+                                    window.refresh();
                                     window.dispatch_action(ToggleRecentFiles.boxed_clone(), cx);
                                 }
                             });
@@ -367,7 +382,7 @@ impl Render for RootView {
                     })
                     .when(self.recent_files_open, |parent| {
                         let theme_clone = theme.clone();
-                        let files = rustmd::user_config::recent_files();
+                        let files = self.recent_files.clone();
                         parent
                             .child(
                                 div()
