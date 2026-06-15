@@ -1,18 +1,15 @@
 use gpui::{App, Global, ReadGlobal};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Default)]
 pub enum KeyMode {
     Win,
+    #[default]
     Mac,
 }
 
 impl Global for KeyMode {}
 
-impl Default for KeyMode {
-    fn default() -> Self {
-        Self::Mac
-    }
-}
 
 impl KeyMode {
     pub fn is_mac(cx: &App) -> bool {

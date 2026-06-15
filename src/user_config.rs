@@ -190,7 +190,7 @@ pub fn add_recent_file(path: &Path) {
         return;
     }
     let files = {
-        let mut files = RECENT_FILES.lock().unwrap();
+        let mut files = RECENT_FILES.lock().unwrap_or_else(|e| e.into_inner());
         files.retain(|f| f != &path_str);
         files.insert(0, path_str);
         files.truncate(5);
@@ -203,7 +203,7 @@ pub fn add_recent_file(path: &Path) {
 
 pub fn clear_recent_files() {
     {
-        let mut files = RECENT_FILES.lock().unwrap();
+        let mut files = RECENT_FILES.lock().unwrap_or_else(|e| e.into_inner());
         files.clear();
     }
     let mut cfg = load_config();
@@ -212,7 +212,7 @@ pub fn clear_recent_files() {
 }
 
 pub fn recent_files() -> Vec<String> {
-    RECENT_FILES.lock().unwrap().clone()
+    RECENT_FILES.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 fn default_font_size() -> f32 {

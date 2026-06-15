@@ -380,7 +380,6 @@ mod tests {
         let code = "| foo |\n| --- |\n| *bar*|\n";
         let mut parser = MarkdownParser::default();
         let tree = parser.parse(code.as_bytes(), None).unwrap();
-        dbg!(&tree.inline_trees());
         let mut cursor = tree.walk();
 
         assert_eq!(cursor.node().kind(), "document");

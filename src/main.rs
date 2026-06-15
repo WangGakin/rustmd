@@ -60,7 +60,7 @@ fn main() {
 
         let file_path_for_watcher = initial_path.clone();
 
-        let win_size = size(px(900.0), px(700.0));
+        let win_size = size(px(rustmd::config::DEFAULT_WIN_WIDTH), px(rustmd::config::DEFAULT_WIN_HEIGHT));
         let win_pos = cx.primary_display().map_or(point(px(0.), px(0.)), |d| {
             let b = d.bounds();
             point(
@@ -124,7 +124,7 @@ fn open_new_window(cx: &mut App) {
         ..Default::default()
     };
 
-    let win_size = size(px(900.0), px(700.0));
+    let win_size = size(px(rustmd::config::DEFAULT_WIN_WIDTH), px(rustmd::config::DEFAULT_WIN_HEIGHT));
     let win_pos = cx.primary_display().map_or(point(px(0.), px(0.)), |d| {
         let b = d.bounds();
         point(
@@ -195,14 +195,13 @@ impl Render for RootView {
                     })
                     .on_action(|_: &ZoomWindow, window, _cx| {
                         if window.is_maximized() {
-                            if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
-                                if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                            if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window)
+                                && let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
                                     unsafe {
                                         let hwnd = windows::Win32::Foundation::HWND(win32_handle.hwnd.get() as _);
                                         let _ = ShowWindowAsync(hwnd, SW_RESTORE);
                                     }
                                 }
-                            }
                         } else {
                             window.zoom_window();
                         }
@@ -328,7 +327,7 @@ impl Render for RootView {
                                     })
                             )
                             .child(
-                                // Popover — renders on top of overlay
+                                // Popover Ã¢â‚¬â€ renders on top of overlay
                                 div()
                                     .absolute()
                                     .top(rems(2.5))
@@ -361,7 +360,7 @@ impl Render for RootView {
                                                     let _ = open::that(parent);
                                                 }
                                             })
-                                            .child("Open Config Directory →")
+                                            .child("Open Config Directory Ã¢â€ â€™")
                                     )
                             )
                     })

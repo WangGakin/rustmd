@@ -1301,7 +1301,7 @@ impl EditorState {
     }
 
     /// Toggle a checkbox on the given line, propagating to children and parents.
-    pub fn toggle_checkbox_for_test(&mut self, line_number: usize) {
+    pub fn toggle_checkbox_state(&mut self, line_number: usize) {
         let (is_checked, checkbox_byte_start) = {
             if line_number >= self.buffer.line_count() {
                 return;
@@ -1356,7 +1356,7 @@ impl EditorState {
         }
 
         // Sort by offset descending so we can modify without invalidating earlier offsets
-        checkboxes_to_toggle.sort_by(|a, b| b.0.cmp(&a.0));
+        checkboxes_to_toggle.sort_unstable_by(|a, b| b.0.cmp(&a.0));
 
         // Toggle each checkbox
         for (offset, _currently_checked) in &checkboxes_to_toggle {
@@ -1694,7 +1694,9 @@ impl Editor {
         let line_count = state.buffer.line_count();
         let list_state = ListState::new(line_count, ListAlignment::Top, px(200.0));
 
-        let editor = Self {
+        
+
+        Self {
             state,
             focus_handle,
             list_state,
@@ -1727,9 +1729,7 @@ impl Editor {
             instance_id: NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed),
             user_message_lines: Vec::new(),
             cursor_blink_visible: true,
-        };
-
-        editor
+        }
     }
 
     /// Start a background timer that toggles cursor visibility every 500ms.
@@ -1738,7 +1738,7 @@ impl Editor {
         cx.spawn(async move |this, cx| {
             loop {
                 if !crate::file_ops::is_dialog_open() {
-                    let _ = cx.update_window(handle.clone(), |_, _window, cx| {
+                    let _ = cx.update_window(handle, |_, _window, cx| {
                         if let Some(editor) = this.upgrade() {
                             editor.update(cx, |editor, cx| {
                                 editor.cursor_blink_visible = !editor.cursor_blink_visible;
@@ -1748,14 +1748,14 @@ impl Editor {
                     });
                 }
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(500))
+                    .timer(std::time::Duration::from_millis(crate::config::CURSOR_BLINK_MS))
                     .await;
             }
         })
         .detach();
     }
 
-    /// Reset blink state — cursor becomes visible and blink cycle restarts.
+    /// Reset blink state â€” cursor becomes visible and blink cycle restarts.
     fn reset_cursor_blink(&mut self) {
         self.cursor_blink_visible = true;
     }
@@ -1834,10 +1834,10 @@ impl Editor {
     /// Cancels any pending fetch and starts a new timer.
     fn fetch_autocomplete_suggestions_debounced(&mut self, cx: &mut Context<Self>) {
         self.autocomplete_debounce_task = None;
-        let window = self.window_handle.clone();
+        let window = self.window_handle;
         let task = cx.spawn(async move |weak, cx| {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(150))
+                .timer(std::time::Duration::from_millis(crate::config::AUTOCOMPLETE_DEBOUNCE_MS))
                 .await;
             if crate::file_ops::is_dialog_open() {
                 return;
@@ -1876,11 +1876,10 @@ impl Editor {
                     EventKind::Modify(_) => {
                         let _ = tx.send(());
                     }
-                    EventKind::Create(_) => {
-                        if event.paths.iter().any(|p| p == &watch_path) {
+                    EventKind::Create(_)
+                        if event.paths.iter().any(|p| p == &watch_path) => {
                             let _ = tx.send(());
                         }
-                    }
                     _ => {}
                 }
             }
@@ -1914,14 +1913,14 @@ impl Editor {
         cx.spawn(async move |weak, cx| {
             loop {
                 cx.background_executor()
-                    .timer(std::time::Duration::from_millis(100))
+                    .timer(std::time::Duration::from_millis(crate::config::FILE_WATCHER_POLL_MS))
                     .await;
 
                 let mut continue_loop = true;
-                    if !crate::file_ops::is_dialog_open() {
-                        if let Some(ref window) = watch_window {
+                    if !crate::file_ops::is_dialog_open()
+                        && let Some(ref window) = watch_window {
                             continue_loop = cx
-                                .update_window(window.clone(), |_, _window, cx| {
+                                .update_window(*window, |_, _window, cx| {
                                     if let Some(editor) = weak.upgrade() {
                                         editor.update(cx, |editor, cx| {
                                             if let Some(rx) = &editor.file_watcher_rx {
@@ -1941,7 +1940,6 @@ impl Editor {
                                 })
                                 .unwrap_or(false);
                         }
-                    }
 
                 if !continue_loop {
                     break;
@@ -2113,7 +2111,7 @@ impl Editor {
     }
 
     fn toggle_checkbox(&mut self, line_number: usize, cx: &mut Context<Self>) {
-        self.state.toggle_checkbox_for_test(line_number);
+        self.state.toggle_checkbox_state(line_number);
         cx.notify();
     }
 
@@ -2564,7 +2562,7 @@ impl Editor {
                     offset: line_range.start + idx,
                 })
             } else {
-                // Last visual row — cross into next buffer line
+                // Last visual row â€” cross into next buffer line
                 let target_line = current_line_idx + 1;
                 if target_line >= self.state.buffer.line_count() {
                     None
@@ -2592,7 +2590,7 @@ impl Editor {
                 offset: line_range.start + idx,
             })
         } else {
-            // First visual row — cross into previous buffer line
+            // First visual row â€” cross into previous buffer line
             if current_line_idx == 0 {
                 None
             } else {
@@ -2985,11 +2983,10 @@ impl Editor {
             }
             _ => {
                 if let Some(key_char) = &keystroke.key_char {
-                    if key_char == " " {
-                        if !self.state.try_insert_space() {
+                    if key_char == " "
+                        && !self.state.try_insert_space() {
                             return;
                         }
-                    }
                     // Regular text insertion is handled by WM_CHAR ->
                     // replace_text_in_range. on_key_down does not insert
                     // printable characters to avoid the WM_KEYDOWN/WM_CHAR
@@ -3554,7 +3551,7 @@ impl Render for Editor {
             }
         }
 
-        // Detect naked URLs in visible lines — only when content changed
+        // Detect naked URLs in visible lines â€” only when content changed
         let _naked_urls_by_line = if content_changed {
             self.detect_naked_urls_in_range(first_visible_line, last_visible_line + 1)
         } else {
@@ -3885,7 +3882,7 @@ impl Render for Editor {
                     let cursor = editor.state.selection.head;
                     let line_idx = editor.state.buffer.byte_to_line(cursor);
 
-                    // Case A: line is visible and measured → center immediately
+                    // Case A: line is visible and measured â†’ center immediately
                     if let Some(item_bounds) = editor.list_state.bounds_for_item(line_idx) {
                         let viewport = editor.list_state.viewport_bounds();
                         let viewport_center_y = viewport.origin.y + viewport.size.height / 2.0;
@@ -3899,7 +3896,7 @@ impl Render for Editor {
                         return;
                     }
 
-                    // Case B: line not measured — reveal it, then center after layout
+                    // Case B: line not measured â€” reveal it, then center after layout
                     editor.list_state.scroll_to_reveal_item(line_idx);
                     let entity = cx.entity().clone();
                     window.defer(cx, move |_window, cx| {
@@ -4573,7 +4570,7 @@ mod tests {
         use super::*;
 
         // --- Tab cycling through states ---
-        // Tree-based: cycle is marker → (para indent if blank) → nested marker → empty
+        // Tree-based: cycle is marker â†’ (para indent if blank) â†’ nested marker â†’ empty
 
         #[test]
         fn tab_on_empty_line_after_list_adds_marker() {
@@ -4982,7 +4979,7 @@ mod tests {
         #[test]
         fn check_parent_checks_all_children() {
             let mut state = editor_with_cursor("- [ ] |parent\n  - [ ] child1\n  - [ ] child2\n");
-            state.toggle_checkbox_for_test(0);
+            state.toggle_checkbox_state(0);
             let text = state.text();
             assert!(text.contains("[x] ~~parent~~"), "parent should be checked");
             assert!(text.contains("[x] ~~child1~~"), "child1 should be checked");
@@ -4993,7 +4990,7 @@ mod tests {
         fn uncheck_parent_unchecks_all_children() {
             let mut state =
                 editor_with_cursor("- [x] ~~|parent~~\n  - [x] ~~child1~~\n  - [x] ~~child2~~\n");
-            state.toggle_checkbox_for_test(0);
+            state.toggle_checkbox_state(0);
             let text = state.text();
             assert!(text.contains("[ ] parent"), "parent should be unchecked");
             assert!(text.contains("[ ] child1"), "child1 should be unchecked");
@@ -5005,7 +5002,7 @@ mod tests {
         fn check_all_siblings_checks_parent() {
             let mut state =
                 editor_with_cursor("- [ ] parent\n  - [x] ~~child1~~\n  - [ ] |child2\n");
-            state.toggle_checkbox_for_test(2);
+            state.toggle_checkbox_state(2);
             let text = state.text();
             assert!(
                 text.contains("[x] ~~parent~~"),
@@ -5022,7 +5019,7 @@ mod tests {
         fn uncheck_child_unchecks_parent() {
             let mut state =
                 editor_with_cursor("- [x] ~~parent~~\n  - [x] ~~|child1~~\n  - [x] ~~child2~~\n");
-            state.toggle_checkbox_for_test(1);
+            state.toggle_checkbox_state(1);
             let text = state.text();
             assert!(text.contains("[ ] parent"), "parent should be unchecked");
             assert!(text.contains("[ ] child1"), "child1 should be unchecked");
@@ -5035,7 +5032,7 @@ mod tests {
         #[test]
         fn deeply_nested_propagation_down() {
             let mut state = editor_with_cursor("- [ ] |level1\n  - [ ] level2\n    - [ ] level3\n");
-            state.toggle_checkbox_for_test(0);
+            state.toggle_checkbox_state(0);
             let text = state.text();
             assert!(text.contains("[x] ~~level1~~"), "level1 should be checked");
             assert!(text.contains("[x] ~~level2~~"), "level2 should be checked");
@@ -5045,7 +5042,7 @@ mod tests {
         #[test]
         fn deeply_nested_propagation_up() {
             let mut state = editor_with_cursor("- [ ] level1\n  - [ ] level2\n    - [ ] |level3\n");
-            state.toggle_checkbox_for_test(2);
+            state.toggle_checkbox_state(2);
             let text = state.text();
             assert!(
                 text.contains("[x] ~~level1~~"),
@@ -5061,7 +5058,7 @@ mod tests {
         #[test]
         fn mixed_siblings_parent_stays_unchecked() {
             let mut state = editor_with_cursor("- [ ] parent\n  - [ ] |child1\n  - [ ] child2\n");
-            state.toggle_checkbox_for_test(1);
+            state.toggle_checkbox_state(1);
             let text = state.text();
             assert!(text.contains("[ ] parent"), "parent should stay unchecked");
             assert!(text.contains("[x] ~~child1~~"), "child1 should be checked");
