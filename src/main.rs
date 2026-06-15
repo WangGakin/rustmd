@@ -18,6 +18,7 @@ use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, NewWindow, Zoom
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
 
 fn main() {
+    env_logger::init();
 
     let config = Config::parse();
 
