@@ -4637,6 +4637,7 @@ dependencies = [
  "dirs 5.0.1",
  "embed-resource 2.5.2",
  "gpui",
+ "log",
  "notify",
  "open",
  "raw-window-handle",

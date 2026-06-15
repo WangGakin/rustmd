@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
+use log::{error, warn};
 
 /// Counter for generating unique editor instance IDs.
 static NEXT_EDITOR_ID: AtomicUsize = AtomicUsize::new(0);
@@ -1886,7 +1887,7 @@ impl Editor {
         }) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("Failed to create file watcher: {}", e);
+                error!("Failed to create file watcher: {}", e);
                 return;
             }
         };
@@ -1896,12 +1897,12 @@ impl Editor {
         } else if let Some(parent) = path.parent() {
             parent.to_path_buf()
         } else {
-            eprintln!("Cannot watch file with no parent directory: {:?}", path);
+            error!("Cannot watch file with no parent directory: {:?}", path);
             return;
         };
 
         if let Err(e) = watcher.watch(&target, RecursiveMode::NonRecursive) {
-            eprintln!("Failed to watch {:?}: {}", target, e);
+            error!("Failed to watch {:?}: {}", target, e);
             return;
         }
 
@@ -1964,7 +1965,7 @@ impl Editor {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to reload file {:?}: {}", path, e);
+                error!("Failed to reload file {:?}: {}", path, e);
                 return;
             }
         };
@@ -3110,7 +3111,7 @@ impl Editor {
         let content = self.state.buffer.text();
 
         if let Err(e) = std::fs::write(&path, &content) {
-            eprintln!("Failed to save file: {}", e);
+            error!("Failed to save file: {}", e);
             return;
         }
 
@@ -3133,7 +3134,7 @@ impl Editor {
 
         let content = self.state.buffer.text();
         if let Err(e) = std::fs::write(&path, &content) {
-            eprintln!("Failed to save file: {}", e);
+            error!("Failed to save file: {}", e);
             return;
         }
 
@@ -3154,7 +3155,7 @@ impl Editor {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to open file: {}", e);
+                error!("Failed to open file: {}", e);
                 return;
             }
         };
@@ -3709,7 +3710,7 @@ impl Render for Editor {
             list(self.list_state.clone(), move |ix, _window, _cx| {
                 // Bounds check: ensure line index is valid for this snapshot
                 if ix >= snapshot.line_count() {
-                    eprintln!(
+                    warn!(
                         "[writ] list callback: ix {} >= line_count {}, rope_len {}",
                         ix,
                         snapshot.line_count(),
@@ -5167,7 +5168,7 @@ mod debug_tree_structure {
 
         if let Some(tree) = state.buffer.tree() {
             let root = tree.block_tree().root_node();
-            eprintln!("Tree: {}", root.to_sexp());
+            log::debug!("Tree: {}", root.to_sexp());
         }
     }
 
@@ -5177,7 +5178,7 @@ mod debug_tree_structure {
 
         if let Some(tree) = state.buffer.tree() {
             let root = tree.block_tree().root_node();
-            eprintln!("Tree: {}", root.to_sexp());
+            log::debug!("Tree: {}", root.to_sexp());
         }
     }
 }
@@ -5189,21 +5190,21 @@ mod debug_tree_detail {
     #[test]
     fn show_tree_detail() {
         let content = "> - hey\n>   paragraph\n";
-        eprintln!("Content: {:?}", content);
-        eprintln!("Bytes:");
+        log::debug!("Content: {:?}", content);
+        log::debug!("Bytes:");
         for (i, b) in content.bytes().enumerate() {
-            eprintln!("  {}: {:?} ({})", i, b as char, b);
+            log::debug!("  {}: {:?} ({})", i, b as char, b);
         }
 
         let state = EditorState::new(content);
 
         if let Some(tree) = state.buffer.tree() {
             let root = tree.block_tree().root_node();
-            eprintln!("\nTree: {}", root.to_sexp());
+            log::debug!("\nTree: {}", root.to_sexp());
 
             // Show each node with byte ranges
             fn print_node(node: tree_sitter::Node, indent: usize) {
-                eprintln!(
+                log::debug!(
                     "{}{} [{}-{}]",
                     "  ".repeat(indent),
                     node.kind(),

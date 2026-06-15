@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
+use log::warn;
 use tree_sitter_highlight::{
     Highlight, HighlightConfiguration, HighlightEvent, Highlighter as TSHighlighter,
 };
@@ -130,7 +131,7 @@ impl Highlighter {
         ) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to create Rust highlight config: {}", e);
+                warn!("Failed to create Rust highlight config: {}", e);
                 return None;
             }
         };
@@ -149,7 +150,7 @@ impl Highlighter {
             match HighlightConfiguration::new(language, "bash", highlights_query, "", "") {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to create Bash highlight config: {}", e);
+                    warn!("Failed to create Bash highlight config: {}", e);
                     return None;
                 }
             };
@@ -167,7 +168,7 @@ impl Highlighter {
             match HighlightConfiguration::new(language, "python", highlights_query, "", "") {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to create Python highlight config: {}", e);
+                    warn!("Failed to create Python highlight config: {}", e);
                     return None;
                 }
             };
@@ -190,7 +191,7 @@ impl Highlighter {
         ) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to create JavaScript highlight config: {}", e);
+                warn!("Failed to create JavaScript highlight config: {}", e);
                 return None;
             }
         };
@@ -208,7 +209,7 @@ impl Highlighter {
             match HighlightConfiguration::new(language, "csharp", highlights_query, "", "") {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to create C# highlight config: {}", e);
+                    warn!("Failed to create C# highlight config: {}", e);
                     return None;
                 }
             };
@@ -226,7 +227,7 @@ impl Highlighter {
             match HighlightConfiguration::new(language, "css", highlights_query, "", "") {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to create CSS highlight config: {}", e);
+                    warn!("Failed to create CSS highlight config: {}", e);
                     return None;
                 }
             };
@@ -244,7 +245,7 @@ impl Highlighter {
             match HighlightConfiguration::new(language, "json", highlights_query, "", "") {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Failed to create JSON highlight config: {}", e);
+                    warn!("Failed to create JSON highlight config: {}", e);
                     return None;
                 }
             };

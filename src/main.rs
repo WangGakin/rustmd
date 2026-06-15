@@ -327,7 +327,7 @@ impl Render for RootView {
                                     })
                             )
                             .child(
-                                // Popover Ã¢â‚¬â€ renders on top of overlay
+                                // Popover renders on top of overlay
                                 div()
                                     .absolute()
                                     .top(rems(2.5))
@@ -360,7 +360,7 @@ impl Render for RootView {
                                                     let _ = open::that(parent);
                                                 }
                                             })
-                                            .child("Open Config Directory Ã¢â€ â€™")
+                                            .child("Open Config Directory \u{2192}")
                                     )
                             )
                     })
