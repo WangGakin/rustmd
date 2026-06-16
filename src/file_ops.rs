@@ -85,11 +85,7 @@ pub fn initial_content(config: &Config) -> String {
 }
 
 pub fn initial_file_path(config: &Config) -> Option<PathBuf> {
-    if let Some(ref path) = config.file {
-        Some(path.clone())
-    } else {
-        None
-    }
+    config.file.clone()
 }
 
 

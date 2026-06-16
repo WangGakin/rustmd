@@ -3,6 +3,7 @@
 //! This module provides types for representing markers (blockquotes, lists,
 //! headings, etc.) and functions for extracting them from the parse tree.
 
+use std::collections::HashMap;
 use ropey::Rope;
 use std::ops::Range;
 use tree_sitter::Node;
@@ -42,6 +43,9 @@ pub struct ParsedNodes {
     pub nodes: Vec<NodeInfo>,
     /// Information about fenced code blocks, sorted by start position
     pub code_blocks: Vec<CodeBlockInfo>,
+    /// Precomputed continuation markers for block_quote_marker/block_continuation nodes.
+    /// Keyed by node start byte offset. Avoids calling parse_continuation during render.
+    pub continuation_markers: HashMap<usize, Vec<Marker>>,
 }
 
 /// The unordered list marker character.
@@ -798,10 +802,13 @@ fn list_item_is_checked_task(node: &Node) -> bool {
 
 /// Collect all nodes as owned NodeInfo structs (no lifetimes).
 /// Used for lazy LineMarkers computation during rendering.
-pub fn collect_node_infos(root: &Node) -> ParsedNodes {
+/// `rope` is used to precompute continuation markers for blockquote nodes,
+/// avoiding per-render calls to `parse_continuation`.
+pub fn collect_node_infos(root: &Node, rope: &Rope) -> ParsedNodes {
     let mut cursor = root.walk();
     let mut nodes = Vec::new();
     let mut code_blocks = Vec::new();
+    let mut continuation_markers = HashMap::new();
     let mut checked_task_stack: Vec<(usize, bool)> = Vec::new();
     let mut code_block_end: Option<usize> = None;
 
@@ -893,6 +900,30 @@ pub fn collect_node_infos(root: &Node) -> ParsedNodes {
             false
         };
 
+        // Precompute continuation markers to avoid parse_continuation during render
+        if matches!(
+            node.kind(),
+            "block_quote_marker" | "block_continuation"
+        ) {
+            let start = node.start_byte();
+            let end = node.end_byte();
+            if start < rope.len_bytes() {
+                let content = rope_slice_cow(rope, start, end);
+                if content.contains('>') {
+                    let markers = parse_continuation(rope, start, end);
+                    continuation_markers.insert(start, markers);
+                } else if !content.is_empty() && content.chars().all(|c| c.is_whitespace()) {
+                    continuation_markers.insert(
+                        start,
+                        vec![Marker {
+                            kind: MarkerKind::Indent,
+                            range: start..end,
+                        }],
+                    );
+                }
+            }
+        }
+
         nodes.push(NodeInfo {
             start_byte: node.start_byte(),
             end_byte: node.end_byte(),
@@ -911,7 +942,7 @@ pub fn collect_node_infos(root: &Node) -> ParsedNodes {
         }
         loop {
             if !cursor.goto_parent() {
-                return ParsedNodes { nodes, code_blocks };
+                return ParsedNodes { nodes, code_blocks, continuation_markers };
             }
             if cursor.goto_next_sibling() {
                 break;
@@ -926,6 +957,7 @@ pub fn collect_node_infos(root: &Node) -> ParsedNodes {
 /// This version works with owned NodeInfo instead of borrowed Node<'a>.
 pub fn markers_at_from_infos(
     nodes: &[NodeInfo],
+    continuation_markers: &HashMap<usize, Vec<Marker>>,
     rope: &Rope,
     line_start: usize,
     line_end: usize,
@@ -948,14 +980,16 @@ pub fn markers_at_from_infos(
                 if kind == "block_continuation" && node.parent_kind == Some("indented_code_block") {
                     continue;
                 }
-                let content = rope_slice_cow(rope, start, end);
-                if content.contains('>') {
-                    markers.extend(parse_continuation(rope, start, end));
-                } else if !content.is_empty() && content.chars().all(|c| c.is_whitespace()) {
-                    markers.push(Marker {
-                        kind: MarkerKind::Indent,
-                        range: start..end,
-                    });
+                if let Some(cached) = continuation_markers.get(&start) {
+                    markers.extend(cached.iter().cloned());
+                } else if start < rope.len_bytes() {
+                    let content = rope_slice_cow(rope, start, end);
+                    if !content.is_empty() && content.chars().all(|c| c.is_whitespace()) {
+                        markers.push(Marker {
+                            kind: MarkerKind::Indent,
+                            range: start..end,
+                        });
+                    }
                 }
             }
             "list_marker_minus" | "list_marker_plus" | "list_marker_star" => {

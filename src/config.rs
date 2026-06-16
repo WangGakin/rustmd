@@ -1,4 +1,3 @@
-use anyhow::Result;
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -6,6 +5,21 @@ use gpui::Global;
 
 /// Environment variable name for GitHub token (shared between clap and tests)
 pub const GITHUB_TOKEN_ENV: &str = "GITHUB_TOKEN";
+
+/// Autocomplete debounce delay in milliseconds.
+pub const AUTOCOMPLETE_DEBOUNCE_MS: u64 = 150;
+
+/// Cursor blink interval in milliseconds.
+pub const CURSOR_BLINK_MS: u64 = 500;
+
+/// File watcher poll interval in milliseconds.
+pub const FILE_WATCHER_POLL_MS: u64 = 100;
+
+/// Default window width in pixels.
+pub const DEFAULT_WIN_WIDTH: f32 = 900.0;
+
+/// Default window height in pixels.
+pub const DEFAULT_WIN_HEIGHT: f32 = 700.0;
 
 #[cfg(target_os = "windows")]
 const DEFAULT_TEXT_FONT: &str = "Segoe UI";
@@ -57,10 +71,3 @@ pub struct Config {
 }
 
 impl Global for Config {}
-
-impl Config {
-    pub fn validate(self) -> Result<Self> {
-        // File doesn't need to exist - we'll create it on save
-        Ok(self)
-    }
-}

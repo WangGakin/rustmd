@@ -81,15 +81,14 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                         .min_w_0()
                         .relative()
                         .on_mouse_down(MouseButton::Left, |_e, window, _cx| {
-                            if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window) {
-                                if let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
+                            if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window)
+                                && let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
                                     unsafe {
                                         let hwnd = HWND(win32_handle.hwnd.get() as _);
                                         let _ = ReleaseCapture();
                                         let _ = SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as _)), Some(LPARAM(0)));
                                     }
                                 }
-                            }
                         })
                         .child(
                             div()
