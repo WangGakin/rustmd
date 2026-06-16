@@ -362,18 +362,6 @@ impl Render for Editor {
                 },
             ))
             .on_action(cx.listener(
-                |_editor: &mut Editor, _: &crate::file_ops::OpenFile, window, cx| {
-                    crate::file_ops::set_dialog_open(true);
-                    let entity = cx.entity().clone();
-                    window.defer(cx, move |_window, cx| {
-                        entity.update(cx, |editor, cx| {
-                            editor.open_file(cx);
-                            crate::file_ops::set_dialog_open(false);
-                        });
-                    });
-                },
-            ))
-            .on_action(cx.listener(
                 |_editor: &mut Editor, _: &crate::file_ops::NewFile, window, cx| {
                     crate::file_ops::set_dialog_open(true);
                     let entity = cx.entity().clone();
@@ -859,9 +847,12 @@ impl Editor {
                         if editor.scrollbar_pending_page_turn {
                             let first_delta =
                                 (f32::from(mouse_y) - f32::from(start_y)).abs();
-                            editor.scrollbar_drag_start_y = Some(mouse_y);
                             if first_delta > 3.0 {
                                 editor.scrollbar_pending_page_turn = false;
+                                // Anchor the drag start to current position so the
+                                // first real scroll delta is small, not the full
+                                // accumulated movement from the original click.
+                                editor.scrollbar_drag_start_y = Some(mouse_y);
                             }
                             return;
                         }

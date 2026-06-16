@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::path::PathBuf;
+
 use clap::Parser;
 use gpui::*;
 use gpui::prelude::FluentBuilder;
@@ -175,6 +177,70 @@ fn open_new_window(cx: &mut App) {
     .unwrap();
 }
 
+fn open_new_window_with_file(path: PathBuf, cx: &mut App) {
+    let user_cfg = user_config::load_config();
+    let editor_config = EditorConfig {
+        text_font: user_cfg.text_font.clone(),
+        code_font: user_cfg.code_font.clone(),
+        theme: user_cfg.theme.to_editor_theme(),
+        ..Default::default()
+    };
+
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    user_config::add_recent_file(&path);
+
+    let win_size = size(px(rustmd::config::DEFAULT_WIN_WIDTH), px(rustmd::config::DEFAULT_WIN_HEIGHT));
+    let win_pos = cx.primary_display().map_or(point(px(0.), px(0.)), |d| {
+        let b = d.bounds();
+        point(
+            b.origin.x + (b.size.width - win_size.width) / 2.0,
+            b.origin.y + (b.size.height - win_size.height) / 2.0,
+        )
+    });
+
+    let path_for_watcher = path.clone();
+
+    cx.open_window(
+        WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds::new(win_pos, win_size))),
+            window_decorations: Some(WindowDecorations::Client),
+            titlebar: Some(TitlebarOptions {
+                title: None,
+                appears_transparent: true,
+                traffic_light_position: None,
+            }),
+            ..Default::default()
+        },
+        |window, cx| {
+            let handle = window.window_handle();
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::with_config(&content, editor_config, cx);
+                editor.watch_file(path_for_watcher, cx);
+                editor
+            });
+            editor.update(cx, |editor, cx| {
+                editor.start_cursor_blink(handle, cx);
+            });
+            window.focus(&editor.read(cx).focus_handle(cx));
+            cx.new(|_cx| {
+                let files = rustmd::user_config::recent_files();
+                RootView {
+                    editor,
+                    file_info: FileInfo {
+                        path: Some(path),
+                        dirty: false,
+                        recent_files: files.clone(),
+                    },
+                    about_open: false,
+                    recent_files_open: false,
+                    recent_files: files,
+                }
+            })
+        },
+    )
+    .unwrap();
+}
+
 struct RootView {
     editor: Entity<Editor>,
     file_info: FileInfo,
@@ -255,6 +321,18 @@ impl Render for RootView {
                     .on_action(cx.listener(|_: &mut RootView, _: &NewWindow, _window, cx| {
                         open_new_window(cx);
                     }))
+                    .on_action(cx.listener(
+                        |_: &mut RootView, _: &OpenFile, window, cx| {
+                            rustmd::file_ops::set_dialog_open(true);
+                            window.defer(cx, move |_window, cx| {
+                                let path = rustmd::file_ops::pick_open_file();
+                                rustmd::file_ops::set_dialog_open(false);
+                                if let Some(path) = path {
+                                    open_new_window_with_file(path, cx);
+                                }
+                            });
+                        },
+                    ))
                     .on_action(cx.listener(|this: &mut RootView, _: &ToggleAbout, _window, _cx| {
                         this.about_open = !this.about_open;
                     }))
