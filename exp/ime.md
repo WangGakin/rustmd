@@ -270,3 +270,6 @@ fn byte_to_char_safe(&self, byte_offset: usize) -> usize {
 - **修复**：首字符插入改为 `(cursor, cursor)` 空区间，消除 destructive range
 - **修复**：`is_ime_output` 扩展至全角符号区 0xFF00-0xFFEF
 - **简化**：删除 replace_text_in_range 中的 ASCII 跳过逻辑和 ASCII 标点清理启发式
+
+### 2026-06-16（修复 10：IME 候选框跟随光标）
+- **修复**：`bounds_for_range` 改为读取 `cursor_screen_pos` 返回光标正下方位置，而非固定偏移

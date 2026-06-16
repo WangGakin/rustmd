@@ -198,8 +198,17 @@ impl EntityInputHandler for Editor {
         cx.notify();
     }
 
-    fn bounds_for_range(&mut self, _r: Range<usize>, eb: Bounds<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
-        Some(Bounds::new(point(eb.origin.x + px(32.0), eb.origin.y + px(8.0)), size(px(16.0), px(22.0))))
+    fn bounds_for_range(&mut self, _r: Range<usize>, eb: Bounds<Pixels>, window: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
+        let cursor_pos = self.cursor_screen_pos.borrow();
+        if let Some(pos) = cursor_pos.position {
+            let line_height = self.config.line_height.to_pixels(window.rem_size());
+            Some(Bounds::new(
+                point(pos.x, pos.y + line_height),
+                size(px(16.0), px(22.0)),
+            ))
+        } else {
+            Some(Bounds::new(point(eb.origin.x + px(32.0), eb.origin.y + px(8.0)), size(px(16.0), px(22.0))))
+        }
     }
 
     fn character_index_for_point(&mut self, p: Point<Pixels>, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {

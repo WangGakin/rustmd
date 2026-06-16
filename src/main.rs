@@ -322,13 +322,23 @@ impl Render for RootView {
                         open_new_window(cx);
                     }))
                     .on_action(cx.listener(
-                        |_: &mut RootView, _: &OpenFile, window, cx| {
+                        |this: &mut RootView, _: &OpenFile, window, cx| {
+                            let editor = this.editor.clone();
+                            let is_pristine = editor.read(cx).file_path().is_none()
+                                && !editor.read(cx).is_dirty();
                             rustmd::file_ops::set_dialog_open(true);
-                            window.defer(cx, move |_window, cx| {
+                            window.defer(cx, move |window, cx| {
                                 let path = rustmd::file_ops::pick_open_file();
                                 rustmd::file_ops::set_dialog_open(false);
                                 if let Some(path) = path {
-                                    open_new_window_with_file(path, cx);
+                                    if is_pristine {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.open_file_at(path, cx);
+                                        });
+                                        window.refresh();
+                                    } else {
+                                        open_new_window_with_file(path, cx);
+                                    }
                                 }
                             });
                         },
