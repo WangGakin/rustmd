@@ -1148,13 +1148,14 @@ impl Editor {
                     )
                     .child(
                         div()
-                            .px(px(4.0))
+                            .px(px(6.0))
                             .py(px(2.0))
                             .text_color(theme.foreground)
+                            .text_xs()
                             .hover(|d| d.bg(theme.selection))
                             .rounded(px(3.0))
                             .cursor_pointer()
-                            .child("\u{21BB}")
+                            .child("Replace")
                             .on_mouse_down(gpui::MouseButton::Left, cx.listener(
                                 |_editor, _event, window, cx| {
                                     window.dispatch_action(ReplaceNext.boxed_clone(), cx);
@@ -1163,13 +1164,14 @@ impl Editor {
                     )
                     .child(
                         div()
-                            .px(px(4.0))
+                            .px(px(6.0))
                             .py(px(2.0))
                             .text_color(theme.foreground)
+                            .text_xs()
                             .hover(|d| d.bg(theme.selection))
                             .rounded(px(3.0))
                             .cursor_pointer()
-                            .child("\u{29BF}")
+                            .child("All")
                             .on_mouse_down(gpui::MouseButton::Left, cx.listener(
                                 |_editor, _event, window, cx| {
                                     window.dispatch_action(ReplaceAll.boxed_clone(), cx);
@@ -1206,7 +1208,7 @@ impl Editor {
             .absolute()
             .top(px(0.0))
             .right(px(4.0))
-            .w(px(360.0))
+            .w(px(400.0))
             .bg(bar_bg)
             .border_1()
             .border_color(border_color)
