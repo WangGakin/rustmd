@@ -15,10 +15,11 @@ use crate::editor::Editor;
 
 impl EntityInputHandler for Editor {
     fn selected_text_range(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) -> Option<UTF16Selection> {
-        let offset = self.state.cursor().offset;
         self.state.buffer.ensure_utf16_cache();
-        let u = self.state.buffer.utf16_offset_from_byte(offset);
-        Some(UTF16Selection { range: u..u, reversed: false })
+        let range = self.state.selection.range();
+        let a = self.state.buffer.utf16_offset_from_byte(range.start);
+        let b = self.state.buffer.utf16_offset_from_byte(range.end);
+        Some(UTF16Selection { range: a..b, reversed: false })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
@@ -49,13 +50,9 @@ impl EntityInputHandler for Editor {
         if a <= len && b <= len { Some(self.state.buffer.slice_cow(a..b).into_owned()) } else { None }
     }
 
-    fn replace_text_in_range(&mut self, replacement: Option<Range<usize>>, text: &str, _w: &mut Window, cx: &mut Context<Self>) {
+    fn replace_text_in_range(&mut self, replacement: Option<Range<usize>>, text: &str, w: &mut Window, cx: &mut Context<Self>) {
         // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
-            let ascii = text.len() == 1 && text.as_bytes()[0].is_ascii_alphabetic();
-            if ascii {
-                return;
-            }
             // IME cancellation: empty text means composition was aborted
             if text.is_empty() {
                 if let Some(mark) = self.ime_marked_range.take() {
@@ -69,7 +66,7 @@ impl EntityInputHandler for Editor {
             let mark = self.ime_marked_range.take().unwrap();
             let new_end = self.state.buffer.replace(mark.clone(), text, mark.start);
             self.state.selection = Selection::new(new_end, new_end);
-            self.sync_list_state(cx);
+            self.sync_list_state(w, cx);
             cx.notify();
             return;
         }
@@ -81,7 +78,13 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 return;
             }
-            let cursor = self.state.cursor().offset;
+            let cursor = if !self.state.selection.is_collapsed() {
+                let range = self.state.selection.range();
+                self.state.buffer.delete(range.clone(), self.state.cursor().offset);
+                range.start
+            } else {
+                self.state.cursor().offset
+            };
 
             // Space is handled by on_key_down's try_insert_space (which
             // manages list indentation). WM_CHAR for space is a duplicate.
@@ -93,7 +96,7 @@ impl EntityInputHandler for Editor {
             if text.len() == 1 && text.as_bytes()[0].is_ascii() {
                 let new_end = self.state.buffer.insert(cursor, text, cursor);
                 self.state.selection = Selection::new(new_end, new_end);
-                self.sync_list_state(cx);
+                self.sync_list_state(w, cx);
                 cx.notify();
                 return;
             }
@@ -108,8 +111,7 @@ impl EntityInputHandler for Editor {
                 0x30A0..=0x30FF | // Katakana
                 0x3400..=0x4DBF | // CJK Extension A
                 0x4E00..=0x9FFF | // CJK Unified Ideographs
-                0xAC00..=0xD7AF | // Hangul Syllables
-                0xFF00..=0xFFEF   // Fullwidth punctuation & symbols
+                0xAC00..=0xD7AF   // Hangul Syllables
             ));
             let new_end = if is_ime_output {
                 let mut composition_start = cursor;
@@ -130,7 +132,7 @@ impl EntityInputHandler for Editor {
                 self.state.buffer.insert(cursor, text, cursor)
             };
             self.state.selection = Selection::new(new_end, new_end);
-            self.sync_list_state(cx);
+            self.sync_list_state(w, cx);
             cx.notify();
             return;
         }
@@ -143,12 +145,12 @@ impl EntityInputHandler for Editor {
             let b = self.state.buffer.byte_offset_from_utf16(r.end);
             let new_end = self.state.buffer.replace(a..b, text, a);
             self.state.selection = Selection::new(new_end, new_end);
-            self.sync_list_state(cx);
+            self.sync_list_state(w, cx);
             cx.notify();
         }
     }
 
-    fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, _w: &mut Window, cx: &mut Context<Self>) {
+    fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, w: &mut Window, cx: &mut Context<Self>) {
         let new_len = new.len();
         // IME cancellation: empty composition string means IME was aborted
         if new_len == 0 {
@@ -167,9 +169,12 @@ impl EntityInputHandler for Editor {
             (self.state.buffer.byte_offset_from_utf16(r.start), self.state.buffer.byte_offset_from_utf16(r.end))
         } else if let Some(mark) = self.ime_marked_range.clone() {
             (mark.start, cursor.max(mark.end))
+        } else if !self.state.selection.is_collapsed() {
+            let sel = self.state.selection.range();
+            (sel.start, sel.end)
         } else {
-            // First composition char — on_key_down no longer inserts text,
-            // so insert at cursor directly (empty range = pure insert).
+            // First composition char (no selection) — on_key_down no longer
+            // inserts text, so insert at cursor directly (empty range = pure insert).
             (cursor, cursor)
         };
 
@@ -177,7 +182,7 @@ impl EntityInputHandler for Editor {
         let new_end = self.state.buffer.replace(from..to, new, from);
         self.ime_marked_range = Some(from..from + new_len);
         self.state.selection = Selection::new(new_end, new_end);
-        self.sync_list_state(cx);
+        self.sync_list_state(w, cx);
         cx.notify();
     }
 
@@ -199,7 +204,7 @@ impl EntityInputHandler for Editor {
     }
 
     fn bounds_for_range(&mut self, _r: Range<usize>, eb: Bounds<Pixels>, window: &mut Window, _: &mut Context<Self>) -> Option<Bounds<Pixels>> {
-        let cursor_pos = self.cursor_screen_pos.borrow();
+        let cursor_pos = self.cursor_screen_pos.get();
         if let Some(pos) = cursor_pos.position {
             let line_height = self.config.line_height.to_pixels(window.rem_size());
             Some(Bounds::new(

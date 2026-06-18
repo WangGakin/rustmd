@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
+#[cfg(debug_assertions)]
 use log::debug;
 
 use gpui::{Rgba, rgb};

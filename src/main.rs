@@ -290,29 +290,44 @@ impl Render for RootView {
                     })
                     .on_action(cx.listener(
                         |this: &mut RootView, _: &CloseWindow, window, cx| {
-                            let editor = this.editor.clone();
-                            if editor.read(cx).is_dirty() {
-                                rustmd::file_ops::set_dialog_open(true);
-                                window.defer(cx, move |window, cx| {
-                                    let should_close = editor.update(cx, |editor, cx| {
-                                        match rustmd::file_ops::confirm_discard() {
-                                            rustmd::file_ops::DiscardChoice::Save => {
-                                                editor.save(cx);
-                                                !editor.is_dirty()
-                                            }
-                                            rustmd::file_ops::DiscardChoice::Cancel => false,
-                                            rustmd::file_ops::DiscardChoice::DontSave => true,
-                                        }
-                                    });
-                                    rustmd::file_ops::set_dialog_open(false);
-                                    if should_close {
-                                        window.remove_window();
-                                    }
-                                });
-                            } else {
-                                window.remove_window();
-                            }
-                        },
+                             if this.editor.read(cx).is_dirty() {
+                                 let weak = this.editor.downgrade();
+                                 let win_handle = window.window_handle();
+                                 cx.spawn(async move |_tx, cx| {
+                                     let choice = rustmd::file_ops::confirm_discard();
+                                     rustmd::file_ops::set_dialog_open(false);
+
+                                     let should_close = match choice {
+                                         rustmd::file_ops::DiscardChoice::Save => {
+                                             let result = cx.update(|cx| {
+                                                 if let Some(editor) = weak.upgrade() {
+                                                     editor.update(cx, |editor, cx| {
+                                                         editor.save(cx);
+                                                         !editor.is_dirty()
+                                                     })
+                                                 } else {
+                                                     false
+                                                 }
+                                             }).ok().unwrap_or(false);
+                                             result
+                                         }
+                                         rustmd::file_ops::DiscardChoice::Cancel => false,
+                                         rustmd::file_ops::DiscardChoice::DontSave => true,
+                                     };
+
+                                     if should_close {
+                                        if cx.update_window(win_handle, |_, window, _cx| {
+                                             window.remove_window();
+                                         }).is_err() {
+                                             log::error!("CloseWindow: window not found during async removal");
+                                         }
+                                     }
+                                 })
+                                 .detach();
+                               } else {
+                                   window.remove_window();
+                               }
+                         },
                     ))
                     .on_action(|_: &ToggleKeyMode, _window, cx| {
                         KeyMode::toggle(cx);
@@ -323,24 +338,39 @@ impl Render for RootView {
                     }))
                     .on_action(cx.listener(
                         |this: &mut RootView, _: &OpenFile, window, cx| {
-                            let editor = this.editor.clone();
-                            let is_pristine = editor.read(cx).file_path().is_none()
-                                && !editor.read(cx).is_dirty();
-                            rustmd::file_ops::set_dialog_open(true);
-                            window.defer(cx, move |window, cx| {
-                                let path = rustmd::file_ops::pick_open_file();
-                                rustmd::file_ops::set_dialog_open(false);
-                                if let Some(path) = path {
-                                    if is_pristine {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.open_file_at(path, cx);
+                            let is_pristine = this.editor.read(cx).file_path().is_none()
+                                && !this.editor.read(cx).is_dirty();
+                            if is_pristine {
+                                let weak = this.editor.downgrade();
+                                let win_handle = window.window_handle();
+                                cx.spawn(async move |_tx, cx| {
+                                    let path = rustmd::file_ops::pick_open_file();
+                                    if let Some(path) = path {
+                                        let _ = cx.update(|cx| {
+                                            if let Some(editor) = weak.upgrade() {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.open_file_at(path, cx);
+                                                })
+                                            }
                                         });
-                                        window.refresh();
-                                    } else {
-                                        open_new_window_with_file(path, cx);
+                                        let _ = cx.update_window(win_handle, |_, window, _cx| {
+                                            window.refresh();
+                                        });
                                     }
-                                }
-                            });
+                                })
+                                .detach();
+                            } else {
+                                let _ = window.window_handle();
+                                cx.spawn(async move |_tx, cx| {
+                                    let path = rustmd::file_ops::pick_open_file();
+                                    if let Some(path) = path {
+                                        let _ = cx.update(|cx| {
+                                            open_new_window_with_file(path, cx);
+                                        });
+                                    }
+                                })
+                                .detach();
+                            }
                         },
                     ))
                     .on_action(cx.listener(|this: &mut RootView, _: &ToggleAbout, _window, _cx| {
@@ -358,32 +388,60 @@ impl Render for RootView {
                                 return;
                             };
                             let path = std::path::PathBuf::from(path_str);
-                            let editor = this.editor.clone();
-                            rustmd::file_ops::set_dialog_open(true);
-                            window.defer(cx, move |window, cx| {
-                                let should_open = editor.update(cx, |editor, cx| {
-                                    if editor.is_dirty() {
-                                        match rustmd::file_ops::confirm_discard() {
-                                            rustmd::file_ops::DiscardChoice::Save => {
+                            let weak = this.editor.downgrade();
+                            let is_dirty = this.editor.read(cx).is_dirty();
+                            let win_handle = window.window_handle();
+                            cx.spawn(async move |_tx, cx| {
+                                let (should_open, needs_save) = if is_dirty {
+                                    match rustmd::file_ops::confirm_discard() {
+                                        rustmd::file_ops::DiscardChoice::Save => (true, true),
+                                        rustmd::file_ops::DiscardChoice::Cancel => (false, false),
+                                        rustmd::file_ops::DiscardChoice::DontSave => (true, false),
+                                    }
+                                } else {
+                                    (true, false)
+                                };
+
+                                if !should_open {
+                                    return;
+                                }
+
+                                if needs_save {
+                                    let _ = cx.update(|cx| {
+                                        if let Some(editor) = weak.upgrade() {
+                                            editor.update(cx, |editor, cx| {
                                                 editor.save(cx);
-                                                !editor.is_dirty()
-                                            }
-                                            rustmd::file_ops::DiscardChoice::Cancel => false,
-                                            rustmd::file_ops::DiscardChoice::DontSave => true,
+                                                editor.is_dirty()
+                                            })
+                                        } else {
+                                            false
                                         }
-                                    } else {
-                                        true
+                                    });
+                                    let still_dirty: bool = cx.update(|cx| {
+                                        if let Some(e) = weak.upgrade() {
+                                            e.read(cx).is_dirty()
+                                        } else {
+                                            true
+                                        }
+                                    }).ok().unwrap_or(true);
+                                    if still_dirty {
+                                        return;
+                                    }
+                                }
+
+                                let _ = cx.update(|cx| {
+                                    if let Some(editor) = weak.upgrade() {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.open_file_at(path, cx);
+                                        })
                                     }
                                 });
-                                rustmd::file_ops::set_dialog_open(false);
-                                if should_open {
-                                    editor.update(cx, |editor, cx| {
-                                        editor.open_file_at(path, cx);
-                                    });
+                                let _ = cx.update_window(win_handle, |_, window, cx| {
                                     window.refresh();
                                     window.dispatch_action(ToggleRecentFiles.boxed_clone(), cx);
-                                }
-                            });
+                                });
+                            })
+                            .detach();
                         },
                     ))
                     .on_action(cx.listener(

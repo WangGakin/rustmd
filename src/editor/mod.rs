@@ -3,14 +3,17 @@ mod config;
 pub mod ime;
 pub mod theme;
 
-pub use action::{CenterLine, Direction, DispatchEditorAction, EditorAction};
+pub use action::{
+    CenterLine, Direction, DispatchEditorAction, EditorAction, FindNext, FindPrevious, ReplaceAll,
+    ReplaceNext, ToggleFind,
+};
 pub use config::EditorConfig;
 pub use theme::EditorTheme;
 
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
@@ -113,7 +116,7 @@ pub struct Editor {
     /// Window handle for async operations (replaces cx.windows().first()).
     window_handle: Option<AnyWindowHandle>,
     /// Shared cursor screen position (written by Line paint, read by autocomplete popup).
-    cursor_screen_pos: Rc<RefCell<CursorScreenPosition>>,
+    cursor_screen_pos: Rc<Cell<CursorScreenPosition>>,
     /// Unique instance ID for element IDs to prevent GPUI element caching conflicts.
     instance_id: usize,
     /// Line ranges that are user messages (for chat editor background highlighting).
@@ -167,7 +170,7 @@ impl Editor {
             is_primary: true, // Default to primary; secondary editors should call set_primary(false)
             status_info: StatusBarInfo::default(),
             window_handle: None,
-            cursor_screen_pos: Rc::new(RefCell::new(CursorScreenPosition::default())),
+            cursor_screen_pos: Rc::new(Cell::new(CursorScreenPosition::default())),
             instance_id: NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed),
             user_message_lines: Vec::new(),
             cursor_blink_visible: true,
@@ -180,7 +183,7 @@ impl Editor {
         cx.spawn(async move |this, cx| {
             loop {
                 if !crate::file_ops::is_dialog_open() {
-                    let _ = cx.update_window(handle, |_, _window, cx| {
+                    let result = cx.update_window(handle, |_, _window, cx| {
                         if let Some(editor) = this.upgrade() {
                             editor.update(cx, |editor, cx| {
                                 editor.cursor_blink_visible = !editor.cursor_blink_visible;
@@ -188,6 +191,9 @@ impl Editor {
                             });
                         }
                     });
+                    if result.is_err() {
+                        break;
+                    }
                 }
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(crate::config::CURSOR_BLINK_MS))
@@ -281,13 +287,15 @@ impl Editor {
                 return;
             }
             if let Some(window) = window {
-                let _ = cx.update_window(window, |_, _window, cx| {
+                if cx.update_window(window, |_, _window, cx| {
                     if let Some(editor) = weak.upgrade() {
                         editor.update(cx, |_editor, cx| {
                             cx.notify();
                         });
                     }
-                });
+                }).is_err() {
+                    return;
+                }
             }
         });
         self.autocomplete_debounce_task = Some(task);
@@ -338,7 +346,7 @@ impl Editor {
 
     /// Sync the list state count with the buffer line count.
     /// Also triggers autosave if enabled.
-    fn sync_list_state(&mut self, cx: &mut Context<Self>) {
+    fn sync_list_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let line_count = self.state.buffer.line_count();
         let current_count = self.list_state.item_count();
 
@@ -352,13 +360,29 @@ impl Editor {
         }
 
         let config = crate::config::Config::global(cx);
-        if config.autosave {
-            self.save(cx);
-            if let Some(path) = &self.file_path
-                && let Ok(metadata) = std::fs::metadata(path)
-            {
-                self.last_save_mtime = metadata.modified().ok();
-            }
+        if config.autosave && self.file_path.is_some() {
+            let path = self.file_path.clone().unwrap();
+            let content = self.state.buffer.text();
+            let win_handle = window.window_handle();
+            cx.spawn(async move |_this, cx| {
+                if let Err(e) = std::fs::write(&path, &content) {
+                    log::error!("Autosave failed: {}", e);
+                    return;
+                }
+                if cx.update_window(win_handle, |_, _, _| {}).is_err() {
+                    return;
+                }
+                let _ = cx.update(|cx| {
+                    if let Some(entity) = _this.upgrade() {
+                        entity.update(cx, |editor, cx| {
+                            editor.state.buffer.mark_clean();
+                            editor.last_save_mtime =
+                                std::fs::metadata(&path).ok().and_then(|m| m.modified().ok());
+                            cx.notify();
+                        });
+                    }
+                });
+            }).detach();
         }
     }
 

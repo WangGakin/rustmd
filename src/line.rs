@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -17,7 +17,7 @@ use crate::inline::StyledRegion;
 use crate::marker::{LineMarkers, MarkerKind};
 
 /// Global state for cursor screen position and content bounds, updated during Line paint.
-#[derive(Clone, Default)]
+#[derive(Clone, Copy, Default)]
 pub struct CursorScreenPosition {
     /// Screen position of the cursor (absolute window coordinates).
     pub position: Option<Point<Pixels>>,
@@ -193,7 +193,7 @@ pub struct LineParams {
     pub inline_highlight_ranges: Vec<Range<usize>>,
     pub inline_highlight_color: Option<Rgba>,
     pub show_cursor: bool,
-    pub cursor_screen_pos: Option<Rc<RefCell<CursorScreenPosition>>>,
+    pub cursor_screen_pos: Option<Rc<Cell<CursorScreenPosition>>>,
 }
 
 #[derive(IntoElement)]
@@ -230,7 +230,7 @@ pub struct Line {
     /// for editing-mode detection (showing/hiding markdown markers).
     show_cursor: bool,
     /// Shared storage for cursor screen position (set during paint).
-    cursor_screen_pos: Option<Rc<RefCell<CursorScreenPosition>>>,
+    cursor_screen_pos: Option<Rc<Cell<CursorScreenPosition>>>,
 }
 
 impl Line {
@@ -1114,10 +1114,10 @@ impl Line {
                 // Store cursor position and content bounds for autocomplete popup positioning
                 // pos from position_for_index appears to already be in absolute coords
                 if let Some(csp) = &csp {
-                    *csp.borrow_mut() = CursorScreenPosition {
+                    csp.set(CursorScreenPosition {
                         position: Some(pos),
                         content_right_edge: Some(bounds.origin.x + bounds.size.width),
-                    };
+                    });
                 }
 
                 let text_style = window.text_style();

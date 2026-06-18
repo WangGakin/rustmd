@@ -2,7 +2,7 @@ use gpui::{Action, App, ElementId, Fill, MouseButton, div, prelude::*, px, rems}
 use raw_window_handle::RawWindowHandle;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, HTCAPTION, WM_NCLBUTTONDOWN};
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, HTCAPTION, WM_NCLBUTTONDOWN};
 
 use crate::editor::EditorTheme;
 use crate::menu;
@@ -86,7 +86,7 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                                     unsafe {
                                         let hwnd = HWND(win32_handle.hwnd.get() as _);
                                         let _ = ReleaseCapture();
-                                        let _ = SendMessageW(hwnd, WM_NCLBUTTONDOWN, Some(WPARAM(HTCAPTION as _)), Some(LPARAM(0)));
+                                        let _ = PostMessageW(Some(hwnd), WM_NCLBUTTONDOWN, WPARAM(HTCAPTION as _), LPARAM(0));
                                     }
                                 }
                         })

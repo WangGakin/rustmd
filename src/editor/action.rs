@@ -61,3 +61,23 @@ pub struct DispatchEditorAction(pub EditorAction);
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(no_json)]
 pub struct CenterLine;
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct ToggleFind;
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct FindNext;
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct FindPrevious;
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct ReplaceNext;
+
+#[derive(Clone, PartialEq, Debug, Action)]
+#[action(no_json)]
+pub struct ReplaceAll;

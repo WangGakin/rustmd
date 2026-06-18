@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Range;
-use std::cell::RefCell;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use log::warn;
@@ -32,7 +32,7 @@ impl Render for Editor {
         let content_changed = buffer_version != self.last_synced_version;
         if content_changed {
             self.last_synced_version = buffer_version;
-            self.sync_list_state(cx);
+            self.sync_list_state(window, cx);
         }
 
         // Update status bar info
@@ -237,7 +237,7 @@ impl Render for Editor {
                                   inline_highlight_ranges: Vec<Range<usize>>,
                                   inline_highlight_color: Option<Rgba>,
                                   block_input: bool,
-                                  csp: Option<Rc<RefCell<CursorScreenPosition>>>|
+                                  csp: Option<Rc<Cell<CursorScreenPosition>>>|
                  -> Line {
                     let line_markers = snap.line_markers(line_idx);
                     let mut inline_styles = snap.inline_styles_for_line(line_idx);
@@ -338,39 +338,141 @@ impl Render for Editor {
                 },
             ))
             .on_action(cx.listener(
-                |_editor: &mut Editor, _: &crate::file_ops::Save, window, cx| {
-                    crate::file_ops::set_dialog_open(true);
-                    let entity = cx.entity().clone();
-                    window.defer(cx, move |_window, cx| {
-                        entity.update(cx, |editor, cx| {
-                            editor.save(cx);
+                |editor: &mut Editor, _: &crate::file_ops::Save, _window, cx| {
+                    if editor.file_path.is_some() {
+                        crate::file_ops::set_dialog_open(true);
+                        editor.save(cx);
+                        crate::file_ops::set_dialog_open(false);
+                    } else {
+                        crate::file_ops::set_dialog_open(true);
+                        let default_name = editor.file_path.as_ref()
+                            .and_then(|p| p.file_name())
+                            .map(|n| n.to_string_lossy().into_owned());
+                        let content = editor.state.buffer.text();
+                        cx.spawn(async move |_this, cx| {
+                            let path = crate::file_ops::pick_save_file(default_name.as_deref());
                             crate::file_ops::set_dialog_open(false);
-                        });
-                    });
+                            if let Some(ref path) = path {
+                                if let Err(e) = std::fs::write(path, &content) {
+                                    log::error!("Failed to save: {}", e);
+                                } else {
+                                    crate::user_config::add_recent_file(path);
+                                    let _ = cx.update(|cx| {
+                                        if let Some(entity) = _this.upgrade() {
+                                            entity.update(cx, |editor, cx| {
+                                                editor.file_path = Some(path.clone());
+                                                editor.state.buffer.mark_clean();
+                                                editor.last_save_mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+                                                if editor.file_watcher.is_none() {
+                                                    editor.watch_file(path.clone(), cx);
+                                                }
+                                                cx.notify();
+                                            })
+                                        }
+                                    });
+                                }
+                            }
+                        }).detach();
+                    }
                 },
             ))
             .on_action(cx.listener(
-                |_editor: &mut Editor, _: &crate::file_ops::SaveAs, window, cx| {
+                |editor: &mut Editor, _: &crate::file_ops::SaveAs, _window, cx| {
                     crate::file_ops::set_dialog_open(true);
-                    let entity = cx.entity().clone();
-                    window.defer(cx, move |_window, cx| {
-                        entity.update(cx, |editor, cx| {
-                            editor.save_as(cx);
-                            crate::file_ops::set_dialog_open(false);
-                        });
-                    });
+                    let default_name = editor.file_path.as_ref()
+                        .and_then(|p| p.file_name())
+                        .map(|n| n.to_string_lossy().into_owned());
+                    let content = editor.state.buffer.text();
+                    cx.spawn(async move |_this, cx| {
+                        let path = crate::file_ops::pick_save_file(default_name.as_deref());
+                        crate::file_ops::set_dialog_open(false);
+                        if let Some(ref path) = path {
+                            if let Err(e) = std::fs::write(path, &content) {
+                                log::error!("Failed to save: {}", e);
+                            } else {
+                                crate::user_config::add_recent_file(path);
+                                let _ = cx.update(|cx| {
+                                    if let Some(entity) = _this.upgrade() {
+                                        entity.update(cx, |editor, cx| {
+                                            editor.file_path = Some(path.clone());
+                                            editor.state.buffer.mark_clean();
+                                            editor.last_save_mtime = std::fs::metadata(path).ok().and_then(|m| m.modified().ok());
+                                            if editor.file_watcher.is_none() {
+                                                editor.watch_file(path.clone(), cx);
+                                            }
+                                            cx.notify();
+                                        })
+                                    }
+                                });
+                            }
+                        }
+                    }).detach();
                 },
             ))
             .on_action(cx.listener(
-                |_editor: &mut Editor, _: &crate::file_ops::NewFile, window, cx| {
+                |editor: &mut Editor, _: &crate::file_ops::NewFile, _window, cx| {
+                    if !editor.is_dirty() {
+                        editor.file_path = None;
+                        editor.file_watcher = None;
+                        editor.file_watcher_rx = None;
+                        editor.set_text("", cx);
+                        editor.state.buffer.mark_clean();
+                        cx.notify();
+                        return;
+                    }
                     crate::file_ops::set_dialog_open(true);
-                    let entity = cx.entity().clone();
-                    window.defer(cx, move |_window, cx| {
-                        entity.update(cx, |editor, cx| {
-                            editor.new_file(cx);
-                            crate::file_ops::set_dialog_open(false);
-                        });
-                    });
+                    cx.spawn(async move |_this, cx| {
+                        let choice = crate::file_ops::confirm_discard();
+                        crate::file_ops::set_dialog_open(false);
+                        match choice {
+                            crate::file_ops::DiscardChoice::Save => {
+                                let _ = cx.update(|cx| {
+                                    if let Some(entity) = _this.upgrade() {
+                                        entity.update(cx, |editor, cx| {
+                                            editor.save(cx);
+                                        })
+                                    }
+                                });
+                                let still_dirty: bool = cx.update(|cx| {
+                                    if let Some(entity) = _this.upgrade() {
+                                        entity.read(cx).is_dirty()
+                                    } else {
+                                        true
+                                    }
+                                }).ok().unwrap_or(true);
+                                if still_dirty {
+                                    return;
+                                }
+                                let _ = cx.update(|cx| {
+                                    if let Some(entity) = _this.upgrade() {
+                                        entity.update(cx, |editor, cx| {
+                                            editor.file_path = None;
+                                            editor.file_watcher = None;
+                                            editor.file_watcher_rx = None;
+                                            editor.set_text("", cx);
+                                            editor.state.buffer.mark_clean();
+                                            cx.notify();
+                                        });
+                                    }
+                                });
+                            }
+                            crate::file_ops::DiscardChoice::Cancel => {}
+                            crate::file_ops::DiscardChoice::DontSave => {
+                                let _ = cx.update(|cx| {
+                                    if let Some(entity) = _this.upgrade() {
+                                        entity.update(cx, |editor, cx| {
+                                            editor.file_path = None;
+                                            editor.file_watcher = None;
+                                            editor.file_watcher_rx = None;
+                                            editor.set_text("", cx);
+                                            editor.state.buffer.mark_clean();
+                                            cx.notify();
+                                        });
+                                    }
+                                });
+                            }
+                        }
+                    }).detach();
                 },
             ))
             .on_action(cx.listener(
@@ -601,9 +703,8 @@ impl Editor {
         let theme = &self.config.theme;
 
         // Get absolute cursor position (set during Line paint)
-        let cursor_screen_pos = self.cursor_screen_pos.borrow();
+        let cursor_screen_pos = self.cursor_screen_pos.get();
         let cursor_pos = cursor_screen_pos.position?;
-        drop(cursor_screen_pos);
 
         // Get viewport bounds for fallback
         let viewport = self.list_state.viewport_bounds();

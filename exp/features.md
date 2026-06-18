@@ -419,30 +419,51 @@ let padding_bottom = padding_bottom_px + viewport_h / 2.0;
 
 ---
 
-## RefCell / Async Task 安全模式汇总
+## GPUI AppCell 双重借用修复：弹窗与窗口拖动 panic（第二十一批 — 2026-06-17）
 
-### 根因
+**版本：** 0.4.2 → 0.4.4
 
-GPUI 的 `RefCell<App>` 全局借用机制不支持嵌套消息循环。rfd 对话框在 Windows 上创建 modal loop，此时 App 被 `borrow_mut`，任何 async task 尝试 `cx.update()`（内部 `borrow_mut`）都会 panic。
+**现象：** 拖动窗口或弹窗存在时，控制台持续刷屏 `RefCell already borrowed` panic。
 
-### 修复模式
+**根因分析：**
 
-| 模式 | 适用场景 | 代码 |
-|------|----------|------|
-| `is_dialog_open()` 守卫 | 定时触发的 async loop（cursor blink、watch_file） | 在调用 `cx.update()` 前检查，跳过对话框打开期间的执行 |
-| `update_window` | 可能被对话框打断的 async task | 用 `cx.update_window(handle, \|_, _, cx\| ...)` 替代 `cx.update()`，`try_borrow_mut` 返回 `Err` 而非 panic |
-| `window.defer()` | 在 `render()` 或 action handler 中打开对话框 | 推迟到当前帧渲染完成后执行，此时 App 借用已释放 |
-| `pending_file_op` | render 中触发的文件操作 | 仅在 render 中设置标志，下一次 render 时检查并执行 (后改为 `window.defer()`) |
+GPUI 内部用 `AppCell`（`RefCell<AppContext>`）管理全局状态。任何 handler（`on_mouse_down`、`window.defer()` 回调等）运行时都持有 `AppCell` 的 mutable borrow。Windows 的嵌套消息循环（来自 `SendMessageW` 的模态 drag loop 和 rfd 对话框的 modal message loop）会在这个 borrow 期间处理 `WM_PAINT` 等消息 → GPUI 尝试再借 `AppCell` → **双重借用 panic**。
 
-### 涉及批次
+三个具体触发路径：
 
-| 批次 | 修复内容 |
-|------|----------|
-| 第六批 | 首次 RefCell panic：cursor blink + `DIALOG_OPEN` 原子标志 + `pending_file_op` 机制 |
-| 第八批 | 所有 async task 改用 `update_window` |
-| 第九批 | `render()` 中使用 `window.defer()` 推迟文件操作 |
-| 第十批 | `watch_file` async loop 添加 `is_dialog_open()` 守卫 |
-| 第十二批 | `watch_file` 改用 `update_window(window, ...)` 彻底解决 |
+| 触发点 | 原因 | 修复 |
+|--------|------|------|
+| 标题栏拖动 | `SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION)` 进入 `DefWindowProc` 的模态 drag loop，重入 GPUI 事件处理 | `SendMessageW` → `PostMessageW`，消息投递到队列，handler 返回释放 AppCell 后再处理 |
+| autosave | `sync_list_state()` 在 `render()` 中调用 `self.save(cx)` → `std::fs::write()` 在 render 周期内持有 AppCell | 改为 `window.defer()` 推迟 I/O 到 render 完成后 |
+| 所有弹窗 | `rfd::FileDialog` / `rfd::MessageDialog` 的模态消息循环在 `window.defer()` 回调（`cx: &mut App`）内部执行 | 弹窗移入 `cx.spawn()` async 闭包（`AsyncApp` 仅持 Weak 引用，不阻塞 AppCell） |
+
+**核心原则：**
+
+1. **`SendMessageW` 永远不应在 GPUI handler 内使用** — 同步发送消息导致 `DefWindowProc` 的嵌套消息循环重入 GPUI，用 `PostMessageW` 替代
+2. **I/O 和弹窗不应在 `render()` 周期内执行** — `render()` 期间 AppCell 已被 GPUI 借出，用 `window.defer()` 推迟
+3. **弹窗不应在 `window.defer()` 回调内执行** — `defer()` 回调的 `cx: &mut App` 持有 AppCell；改用 `cx.spawn()` 将弹窗放入 async 上下文（`AsyncApp` = Weak 引用，不阻塞）
+4. **`cursor_screen_pos` 的 `RefCell` → `Cell`** — `CursorScreenPosition` 是 `Copy` 类型，用 `Cell` 替代 `RefCell` 消除不必要的运行时借用检查
+
+**涉及文件：**
+
+| 文件 | 改动 |
+|------|------|
+| `src/title_bar.rs` | `SendMessageW` → `PostMessageW`（参数签名不同：`Some(hwnd)`, `WPARAM(…)`, `LPARAM(0)`） |
+| `src/editor/mod.rs` | `sync_list_state` 签名加 `window: &mut Window`；autosave 改为 `window.defer()` + I/O 分离 |
+| `src/editor/ime.rs` | 5处 `sync_list_state` 调用补传 `window` 参数 |
+| `src/editor/render.rs` | Save/SaveAs/NewFile handler：有路径时直接保存，无路径/有脏数据时用 `cx.spawn()` 弹窗 + I/O 在 `update()` 外执行 |
+| `src/main.rs` | CloseWindow/OpenFile/OpenRecentFile handler：弹窗全部移入 `cx.spawn()` async 闭包 |
+| `src/line.rs` | `CursorScreenPosition` 加 `Copy` derive；`Rc<RefCell<>>` → `Rc<Cell<>>`；paint 中 `borrow_mut()` → `set()` |
+| `src/editor/mod.rs` | `cursor_screen_pos` 字段类型：`Rc<RefCell<>>` → `Rc<Cell<>>`；初始化 `RefCell::new()` → `Cell::new()` |
+| `src/editor/render.rs` | `render_autocomplete` 中 `.borrow()` → `.get()` |
+| `src/editor/ime.rs` | `bounds_for_range` 中 `.try_borrow().ok().and_then(...)` → `.get()` |
+
+**调试经验：**
+
+1. `RUST_BACKTRACE=1` 看 panic 栈 → 确认是哪个 `RefCell` 的双重借用
+2. 检查 `.borrow()` / `.borrow_mut()` 的作用域是否有重叠（闭包、循环、if 分支）
+3. 考虑 `try_borrow()` / `try_borrow_mut()` 替代，出错时打印日志方便定位
+4. GPUI 的 `AppCell` panic 时栈回溯在 GPUI 内部（`entity.rs` 等），从应用代码看只看到 `cx.notify()` 等常规调用 —— 需要理解 Windows 消息循环机制才能定位根因
 
 ---
 

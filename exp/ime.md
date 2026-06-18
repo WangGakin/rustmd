@@ -273,3 +273,20 @@ fn byte_to_char_safe(&self, byte_offset: usize) -> usize {
 
 ### 2026-06-16（修复 10：IME 候选框跟随光标）
 - **修复**：`bounds_for_range` 改为读取 `cursor_screen_pos` 返回光标正下方位置，而非固定偏移
+
+### 2026-06-18（0.4.5：全角标点误吞 & 单字符提交卡死）
+
+两个 bug 的根因都在 `replace_text_in_range` 的 **组合模式分支**。
+
+**Bug 1：全角标点误吞英文字符**
+- **现象**：中文 IME 输入英文上屏后，输入 `，；？：` 等全角标点导致上屏英文消失；`。、""` 安全
+- **根因**：`is_ime_output` 范围包含 `0xFF00..=0xFFEF`（全角符号），纯全角标点无 CJK 字符时仍触发 pinyin 启发式回扫，替换光标前英文
+- **确认方法**：对照 Unicode 范围与用户测试结果完全吻合（触发字符全在 0xFF00-0xFFEF 内，安全字符全不在）
+- **修复**：从 `is_ime_output` 范围中删除 `0xFF00..=0xFFEF`（`ime.rs:113-119`）
+- **原理**：Shouxin 类 IME 的未标记 composition 输出必然携带具体 CJK 字符字形（如 `你好，` 含 `0x4F60 0x597D`），纯全角标点不需要 pinyin cleanup
+
+**Bug 2：单 ASCII 字符 IME 提交卡死编辑**
+- **现象**：中文 IME 输入单个英文字符上屏后，无法删除/移动光标/输入任何内容；切换英文模式仍无法输入
+- **根因**：`replace_text_in_range` 组合分支有 ASCII 守卫（`ime.rs:56-59`），IME 提交单 ASCII 字符时被静默丢弃；`ime_marked_range` 未清除，编辑器认为仍在组合；后续所有 `replace_text_in_range` 调用都被守卫拦截或错误替换
+- **修复**：删除 ASCII 守卫块（`ime.rs:56-59`）
+- **原理**：守卫原为防止 WM_KEYDOWN+WM_CHAR 双路径重复插入，但 `on_key_down` 已不插入可打印字符（0.4.4 最终方案），守卫已无必要且阻塞 IME 提交流程
