@@ -3,7 +3,7 @@ use gpui::{
     SharedString, StatefulInteractiveElement, Styled, actions, div, px,
 };
 
-use crate::editor::EditorTheme;
+use crate::editor::{EditorTheme, ToggleFind};
 use crate::file_ops::{NewFile, OpenFile, Save};
 use crate::key_mode::KeyMode;
 use crate::tooltip::Tooltip;
@@ -43,6 +43,7 @@ pub fn get_toolbar_buttons(cx: &App) -> Vec<ToolbarButton> {
         ToolbarButton::new("\u{1F4C4}", "New file", NewFile),
         ToolbarButton::new("\u{1F4C2}", "Open file", OpenFile),
         ToolbarButton::new("\u{1F4BE}", "Save", Save),
+        ToolbarButton::new("\u{1F50D}", "Find & Replace", ToggleFind),
         ToolbarButton::new("\u{1F532}", "New window", NewWindow),
         ToolbarButton::new(
             format!("⌨ {}", mode_text),
@@ -58,6 +59,7 @@ fn tooltip_text(button: &ToolbarButton) -> String {
         "New file" => "New file (Ctrl+Alt+N)".into(),
         "Open file" => "Open file (Ctrl+O)".into(),
         "Save" => "Save (Ctrl+S)".into(),
+        "Find & Replace" => "Find and replace".into(),
         "New window" => "New window (Ctrl+Shift+N)".into(),
         "Keyboard mode" => {
             let mode = button.name.to_string();
@@ -78,7 +80,7 @@ pub fn toolbar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
         let name = button.name.to_string();
 
         // Separator between Save group and NewWindow
-        if index == 4 {
+        if index == 5 {
             button_elements.push(
                 div()
                     .px(px(2.0))
