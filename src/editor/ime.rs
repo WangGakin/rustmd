@@ -51,6 +51,49 @@ impl EntityInputHandler for Editor {
     }
 
     fn replace_text_in_range(&mut self, replacement: Option<Range<usize>>, text: &str, w: &mut Window, cx: &mut Context<Self>) {
+        // Find bar has focus — redirect text to find state instead of buffer
+        if let Some(ref mut fs) = self.find_state {
+            if fs.visible && fs.input_focused && !text.is_empty() {
+                // ASCII characters are already handled by handle_find_key in on_key_down
+                if text.len() == 1 && text.as_bytes()[0].is_ascii() {
+                    cx.notify();
+                    return;
+                }
+                if fs.replace_input_focused {
+                    fs.replace_text.push_str(text);
+                } else {
+                    // For CJK output, replace trailing ASCII pinyin letters
+                    let is_cjk = text.chars().any(|c| matches!(c as u32,
+                        0x3040..=0x309F | 0x30A0..=0x30FF |
+                        0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF
+                    ));
+                    if is_cjk {
+                        let mut replace_start = fs.query.len();
+                        while replace_start > 0 {
+                            if fs.query.as_bytes()[replace_start - 1].is_ascii_alphabetic() {
+                                replace_start -= 1;
+                            } else { break; }
+                        }
+                        if replace_start < fs.query.len() {
+                            fs.query.replace_range(replace_start.., text);
+                        } else {
+                            fs.query.push_str(text);
+                        }
+                    } else {
+                        fs.query.push_str(text);
+                    }
+                    let full_text = self.state.buffer.text();
+                    fs.search(&full_text);
+                    if let Some(idx) = fs.current_match {
+                        let range = fs.matches[idx].clone();
+                        self.state.selection = Selection::new(range.start, range.end);
+                    }
+                }
+                cx.notify();
+                return;
+            }
+        }
+
         // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
             // IME cancellation: empty text means composition was aborted
@@ -151,6 +194,14 @@ impl EntityInputHandler for Editor {
     }
 
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, w: &mut Window, cx: &mut Context<Self>) {
+        // Find bar has focus — IME composition preview is not shown in simple input,
+        // final text will arrive through replace_text_in_range
+        if let Some(ref fs) = self.find_state {
+            if fs.visible && fs.input_focused {
+                return;
+            }
+        }
+
         let new_len = new.len();
         // IME cancellation: empty composition string means IME was aborted
         if new_len == 0 {
@@ -187,6 +238,12 @@ impl EntityInputHandler for Editor {
     }
 
     fn unmark_text(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
+        // Find bar has focus — IME composition is not tracked here
+        if let Some(ref fs) = self.find_state {
+            if fs.visible && fs.input_focused {
+                return;
+            }
+        }
         if let Some(mark) = self.ime_marked_range.take() {
             let mark_end = mark.end.min(self.state.buffer.len_bytes());
             if mark.start < mark_end {
