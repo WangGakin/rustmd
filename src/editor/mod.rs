@@ -125,6 +125,7 @@ pub struct Editor {
     user_message_lines: Vec<Range<usize>>,
     /// Controls cursor blink visibility. Toggled by a background timer.
     cursor_blink_visible: bool,
+    find_state: Option<find::FindState>,
 }
 
 impl Editor {
@@ -175,6 +176,7 @@ impl Editor {
             instance_id: NEXT_EDITOR_ID.fetch_add(1, Ordering::Relaxed),
             user_message_lines: Vec::new(),
             cursor_blink_visible: true,
+            find_state: None,
         }
     }
 
@@ -964,6 +966,14 @@ impl Editor {
         }
         self.reset_cursor_blink();
 
+        // Route keyboard input to find bar when focused
+        if let Some(ref mut fs) = self.find_state {
+            if fs.visible && fs.input_focused {
+                self.handle_find_key(event, window, cx);
+                return;
+            }
+        }
+
         // Defensive: if IME marked range went stale (e.g. IME cancelled without cleanup),
         // discard it so GPUI resumes normal keyboard dispatch.
         if let Some(ref mark) = self.ime_marked_range {
@@ -1208,6 +1218,76 @@ impl Editor {
             }
         }
 
+        cx.notify();
+    }
+
+    /// Handle keyboard events when the find bar has input focus.
+    fn handle_find_key(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let keystroke = &event.keystroke;
+        let fs = self.find_state.as_mut().unwrap();
+
+        match keystroke.key.as_str() {
+            "escape" => {
+                fs.close();
+            }
+            "enter" if !keystroke.modifiers.shift => {
+                if let Some(idx) = fs.find_next() {
+                    let range = fs.matches[idx].clone();
+                    self.state.selection = crate::cursor::Selection::new(range.start, range.end);
+                    self.scroll_to_cursor_pending = true;
+                }
+            }
+            "enter" => {
+                // Shift+Enter: previous match
+                if let Some(idx) = fs.find_prev() {
+                    let range = fs.matches[idx].clone();
+                    self.state.selection = crate::cursor::Selection::new(range.start, range.end);
+                    self.scroll_to_cursor_pending = true;
+                }
+            }
+            "backspace" => {
+                if fs.replace_input_focused {
+                    fs.replace_text.pop();
+                } else {
+                    fs.query.pop();
+                    let text = self.state.buffer.text();
+                    fs.search(&text);
+                    if let Some(idx) = fs.current_match {
+                        let range = fs.matches[idx].clone();
+                        self.state.selection =
+                            crate::cursor::Selection::new(range.start, range.end);
+                        self.scroll_to_cursor_pending = true;
+                    }
+                }
+            }
+            "tab" => {
+                if fs.replace_visible {
+                    fs.replace_input_focused = !fs.replace_input_focused;
+                }
+            }
+            _ => {
+                if let Some(key_char) = &keystroke.key_char {
+                    if fs.replace_input_focused {
+                        fs.replace_text.push_str(key_char);
+                    } else {
+                        fs.query.push_str(key_char);
+                        let text = self.state.buffer.text();
+                        fs.search(&text);
+                        if let Some(idx) = fs.current_match {
+                            let range = fs.matches[idx].clone();
+                            self.state.selection =
+                                crate::cursor::Selection::new(range.start, range.end);
+                            self.scroll_to_cursor_pending = true;
+                        }
+                    }
+                }
+            }
+        }
         cx.notify();
     }
 
