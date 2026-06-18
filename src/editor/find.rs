@@ -84,6 +84,7 @@ impl FindState {
     }
 
     /// Number of matches found.
+    #[allow(dead_code)]
     pub fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -108,6 +109,7 @@ impl FindState {
 
     /// For a given line byte range, return (inline_highlight_ranges, current_match_range)
     /// where ranges are relative to the line start.
+    #[allow(dead_code)]
     pub fn highlights_for_line(
         &self,
         line_start: usize,

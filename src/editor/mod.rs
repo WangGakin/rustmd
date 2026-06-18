@@ -289,17 +289,15 @@ impl Editor {
             if crate::file_ops::is_dialog_open() {
                 return;
             }
-            if let Some(window) = window {
-                if cx.update_window(window, |_, _window, cx| {
+            if let Some(window) = window
+                && cx.update_window(window, |_, _window, cx| {
                     if let Some(editor) = weak.upgrade() {
                         editor.update(cx, |_editor, cx| {
                             cx.notify();
                         });
                     }
                 }).is_err() {
-                    return;
                 }
-            }
         });
         self.autocomplete_debounce_task = Some(task);
     }
@@ -967,12 +965,11 @@ impl Editor {
         self.reset_cursor_blink();
 
         // Route keyboard input to find bar when focused
-        if let Some(ref mut fs) = self.find_state {
-            if fs.visible && fs.input_focused {
+        if let Some(ref mut fs) = self.find_state
+            && fs.visible && fs.input_focused {
                 self.handle_find_key(event, window, cx);
                 return;
             }
-        }
 
         // Defensive: if IME marked range went stale (e.g. IME cancelled without cleanup),
         // discard it so GPUI resumes normal keyboard dispatch.

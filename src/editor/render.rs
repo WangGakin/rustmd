@@ -215,12 +215,13 @@ impl Render for Editor {
         let input_blocked = self.input_blocked;
 
         // Pre-extract find match data for highlighting
-        let find_data: Option<(Vec<std::ops::Range<usize>>, Option<std::ops::Range<usize>>)> =
+        type FindData = (Vec<std::ops::Range<usize>>, Option<std::ops::Range<usize>>);
+        let find_data: Option<FindData> =
             self.find_state.as_ref().map(|fs| {
                 let current_range = fs.current_match.and_then(|i| fs.matches.get(i).cloned());
                 (fs.matches.clone(), current_range)
             });
-        let find_visible = self.find_state.as_ref().map_or(false, |fs| fs.visible && !fs.query.is_empty());
+        let find_visible = self.find_state.as_ref().is_some_and(|fs| fs.visible && !fs.query.is_empty());
 
         let editor_id = self.instance_id;
         let cursor_screen_pos = self.cursor_screen_pos.clone();
@@ -338,11 +339,10 @@ impl Render for Editor {
                             }
                         }
                         let mut ranges: Vec<Range<usize>> = normal;
-                        if let Some(ref cur) = current {
-                            if !ranges.contains(cur) {
+                        if let Some(ref cur) = current
+                            && !ranges.contains(cur) {
                                 ranges.push(cur.clone());
                             }
-                        }
                         let bg = {
                             let mut c: gpui::Hsla = theme.orange.into();
                             c.a = 0.25;
@@ -591,30 +591,26 @@ impl Render for Editor {
                 |editor: &mut Editor, _: &FindNext, _window, cx| {
                     if let Some(ref mut fs) = editor.find_state
                         && !fs.matches.is_empty()
-                    {
-                        if let Some(idx) = fs.find_next() {
+                        && let Some(idx) = fs.find_next() {
                             let range = fs.matches[idx].clone();
                             editor.state.selection =
                                 crate::cursor::Selection::new(range.start, range.end);
                             editor.scroll_to_cursor_pending = true;
                             cx.notify();
                         }
-                    }
                 },
             ))
             .on_action(cx.listener(
                 |editor: &mut Editor, _: &FindPrevious, _window, cx| {
                     if let Some(ref mut fs) = editor.find_state
                         && !fs.matches.is_empty()
-                    {
-                        if let Some(idx) = fs.find_prev() {
+                        && let Some(idx) = fs.find_prev() {
                             let range = fs.matches[idx].clone();
                             editor.state.selection =
                                 crate::cursor::Selection::new(range.start, range.end);
                             editor.scroll_to_cursor_pending = true;
                             cx.notify();
                         }
-                    }
                 },
             ))
             .on_action(cx.listener(
