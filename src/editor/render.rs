@@ -6,7 +6,7 @@ use std::rc::Rc;
 use log::warn;
 
 use gpui::{
-    AnyElement, App, Context, Corner, CursorStyle, DragMoveEvent, FocusHandle, Focusable,
+    Action, AnyElement, App, Context, Corner, CursorStyle, DragMoveEvent, FocusHandle, Focusable,
     Hsla, IntoElement, MouseButton, Pixels, Render,
     Rgba, Window, anchored, div, font, list, point, prelude::*, px,
 };
@@ -214,6 +214,13 @@ impl Render for Editor {
 
         let input_blocked = self.input_blocked;
 
+        // Pre-extract find match data for highlighting
+        let find_data: Option<(Vec<std::ops::Range<usize>>, Option<usize>)> =
+            self.find_state.as_ref().map(|fs| {
+                (fs.matches.clone(), fs.current_match)
+            });
+        let find_visible = self.find_state.as_ref().map_or(false, |fs| fs.visible && !fs.query.is_empty());
+
         let editor_id = self.instance_id;
         let cursor_screen_pos = self.cursor_screen_pos.clone();
         let line_list = div().id(("line-list", editor_id)).size_full().child(
@@ -299,8 +306,39 @@ impl Render for Editor {
                     None
                 };
 
-                let inline_highlight_ranges: Vec<Range<usize>> = Vec::new();
-                let inline_highlight_color = None;
+                // Inject find match highlights
+                let (inline_highlight_ranges, inline_highlight_color) =
+                    if find_visible
+                        && let Some((ref find_matches, _current)) = find_data
+                        && !find_matches.is_empty()
+                    {
+                        let line_start = snapshot.rope.line_to_byte(ix);
+                        let line_end = if ix + 1 < snapshot.line_count() {
+                            snapshot.rope.line_to_byte(ix + 1)
+                        } else {
+                            snapshot.rope.len_bytes()
+                        };
+                        let mut ranges: Vec<Range<usize>> = Vec::new();
+                        for m in find_matches.iter() {
+                            if m.start >= line_end || m.end <= line_start {
+                                continue;
+                            }
+                            let rel_start = m.start.saturating_sub(line_start);
+                            let rel_end = m.end.saturating_sub(line_start);
+                            let rel_end = rel_end.min(line_end - line_start);
+                            if rel_start < rel_end {
+                                ranges.push(rel_start..rel_end);
+                            }
+                        }
+                        let bg = {
+                            let mut c: gpui::Hsla = theme.orange.into();
+                            c.a = 0.25;
+                            gpui::Rgba::from(c)
+                        };
+                        (ranges, Some(bg))
+                    } else {
+                        (Vec::new(), None)
+                    };
 
                 // Build the main line element
                 let line_element = build_line(
@@ -518,6 +556,87 @@ impl Render for Editor {
                     });
                 },
             ))
+            .on_action(cx.listener(
+                |editor: &mut Editor, _: &ToggleFind, _window, cx| {
+                    if let Some(ref mut fs) = editor.find_state {
+                        if fs.visible {
+                            fs.close();
+                        } else {
+                            fs.visible = true;
+                            fs.input_focused = true;
+                        }
+                    } else {
+                        let mut fs = crate::editor::find::FindState::new();
+                        fs.visible = true;
+                        fs.input_focused = true;
+                        editor.find_state = Some(fs);
+                    }
+                    cx.notify();
+                },
+            ))
+            .on_action(cx.listener(
+                |editor: &mut Editor, _: &FindNext, _window, cx| {
+                    if let Some(ref mut fs) = editor.find_state
+                        && !fs.matches.is_empty()
+                    {
+                        if let Some(idx) = fs.find_next() {
+                            let range = fs.matches[idx].clone();
+                            editor.state.selection =
+                                crate::cursor::Selection::new(range.start, range.end);
+                            editor.scroll_to_cursor_pending = true;
+                            cx.notify();
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |editor: &mut Editor, _: &FindPrevious, _window, cx| {
+                    if let Some(ref mut fs) = editor.find_state
+                        && !fs.matches.is_empty()
+                    {
+                        if let Some(idx) = fs.find_prev() {
+                            let range = fs.matches[idx].clone();
+                            editor.state.selection =
+                                crate::cursor::Selection::new(range.start, range.end);
+                            editor.scroll_to_cursor_pending = true;
+                            cx.notify();
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |editor: &mut Editor, _: &ReplaceNext, _window, cx| {
+                    if let Some(ref mut fs) = editor.find_state
+                        && let Some(range) = fs.current_match_range()
+                    {
+                        editor.state.buffer.replace(range.clone(), &fs.replace_text, range.start);
+                        let text = editor.state.buffer.text();
+                        fs.search(&text);
+                        if let Some(idx) = fs.current_match {
+                            let r = fs.matches[idx].clone();
+                            editor.state.selection =
+                                crate::cursor::Selection::new(r.start, r.end);
+                        }
+                        cx.notify();
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |editor: &mut Editor, _: &ReplaceAll, _window, cx| {
+                    if let Some(ref mut fs) = editor.find_state
+                        && !fs.matches.is_empty()
+                    {
+                        let matches = fs.matches.clone();
+                        let replace_text = fs.replace_text.clone();
+                        for range in matches.iter().rev() {
+                            editor.state.buffer.replace(range.clone(), &replace_text, range.start);
+                        }
+                        let text = editor.state.buffer.text();
+                        fs.search(&text);
+                        cx.notify();
+                    }
+                },
+            ))
             // IMPORTANT: Use capture phase to focus this editor BEFORE child elements
             // (Line components) handle mouse events. This ensures DispatchEditorAction
             // from Line click handlers will be routed to THIS editor.
@@ -676,6 +795,7 @@ impl Render for Editor {
             .child(line_list)
             .children(self.render_scrollbar(&theme, window.rem_size(), editor_id, cx))
             .children(self.render_autocomplete(&line_theme, window, cx))
+            .children(self.render_find_bar(&theme, cx))
     }
 }
 
@@ -825,6 +945,245 @@ impl Editor {
                 )
                 .into_any_element(),
         )
+    }
+
+    /// Render the find/replace bar as an overlay at the top of the editor.
+    fn render_find_bar(
+        &self,
+        theme: &EditorTheme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let fs = self.find_state.as_ref()?;
+        if !fs.visible {
+            return None;
+        }
+
+        let bar_bg = {
+            let mut c: gpui::Hsla = theme.background.into();
+            c.a = 0.95;
+            gpui::Rgba::from(c)
+        };
+
+        let input_bg = {
+            let mut c: gpui::Hsla = theme.selection.into();
+            c.a = 0.4;
+            gpui::Rgba::from(c)
+        };
+
+        let has_results = !fs.matches.is_empty();
+        let match_info = if fs.query.is_empty() {
+            String::new()
+        } else if has_results {
+            format!(
+                "{}/{}",
+                fs.current_match.map_or(0, |i| i + 1),
+                fs.matches.len()
+            )
+        } else {
+            "No results".to_string()
+        };
+
+        let query_display: gpui::SharedString = if fs.query.is_empty() {
+            "Search\u{2026}".into()
+        } else {
+            fs.query.clone().into()
+        };
+
+        let replace_display: gpui::SharedString = fs.replace_text.clone().into();
+
+        let border_color = if !has_results && !fs.query.is_empty() {
+            theme.red
+        } else {
+            theme.comment
+        };
+
+        // Search row: icon + input + info + previous + next + close
+        let search_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.0))
+            .child(div().text_color(theme.comment).child("\u{1F50D}"))
+            .child(
+                div()
+                    .id("find-input")
+                    .flex_1()
+                    .min_w(px(100.0))
+                    .px(px(6.0))
+                    .py(px(2.0))
+                    .bg(input_bg)
+                    .rounded(px(3.0))
+                    .text_color(if !has_results && !fs.query.is_empty() { theme.red } else { theme.foreground })
+                    .child(query_display)
+                    .cursor(CursorStyle::IBeam)
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                        |editor, _event, _window, cx| {
+                            if let Some(ref mut fs) = editor.find_state {
+                                fs.input_focused = true;
+                                fs.replace_input_focused = false;
+                                cx.notify();
+                            }
+                        },
+                    )),
+            )
+            .child(
+                div().text_color(theme.comment).text_xs().child(match_info),
+            )
+            .child(
+                div()
+                    .px(px(4.0))
+                    .py(px(2.0))
+                    .text_color(theme.foreground)
+                    .hover(|d| d.bg(theme.selection))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .child("\u{25B2}")
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                        |_editor, _event, window, cx| {
+                            window.dispatch_action(FindPrevious.boxed_clone(), cx);
+                        },
+                    ))
+            )
+            .child(
+                div()
+                    .px(px(4.0))
+                    .py(px(2.0))
+                    .text_color(theme.foreground)
+                    .hover(|d| d.bg(theme.selection))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .child("\u{25BC}")
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                        |_editor, _event, window, cx| {
+                            window.dispatch_action(FindNext.boxed_clone(), cx);
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .px(px(4.0))
+                    .py(px(2.0))
+                    .text_color(theme.foreground)
+                    .hover(|d| d.bg(theme.selection))
+                    .rounded(px(3.0))
+                    .cursor_pointer()
+                    .child("\u{2715}")
+                    .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                        |_editor, _event, window, cx| {
+                            window.dispatch_action(ToggleFind.boxed_clone(), cx);
+                        },
+                    ))
+            );
+
+        // If replace_visible, add replace row with input + replace_next + replace_all buttons
+        let replace_row = if fs.replace_visible {
+            Some(
+                div()
+                    .mt(px(4.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .child(div().w(px(16.0)))
+                    .child(
+                        div()
+                            .id("replace-input")
+                            .flex_1()
+                            .min_w(px(100.0))
+                            .px(px(6.0))
+                            .py(px(2.0))
+                            .bg(input_bg)
+                            .rounded(px(3.0))
+                            .text_color(theme.foreground)
+                            .child(replace_display)
+                            .cursor(CursorStyle::IBeam)
+                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                                |editor, _event, _window, cx| {
+                                    if let Some(ref mut fs) = editor.find_state {
+                                        fs.input_focused = true;
+                                        fs.replace_input_focused = true;
+                                        cx.notify();
+                                    }
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .px(px(4.0))
+                            .py(px(2.0))
+                            .text_color(theme.foreground)
+                            .hover(|d| d.bg(theme.selection))
+                            .rounded(px(3.0))
+                            .cursor_pointer()
+                            .child("\u{21BB}")
+                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                                |_editor, _event, window, cx| {
+                                    window.dispatch_action(ReplaceNext.boxed_clone(), cx);
+                                },
+                            )),
+                    )
+                    .child(
+                        div()
+                            .px(px(4.0))
+                            .py(px(2.0))
+                            .text_color(theme.foreground)
+                            .hover(|d| d.bg(theme.selection))
+                            .rounded(px(3.0))
+                            .cursor_pointer()
+                            .child("\u{29BF}")
+                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                                |_editor, _event, window, cx| {
+                                    window.dispatch_action(ReplaceAll.boxed_clone(), cx);
+                                },
+                            )),
+                    ),
+            )
+        } else {
+            // Show "Replace" link to expand replace section
+            Some(
+                div()
+                    .mt(px(4.0))
+                    .child(
+                        div()
+                            .text_color(theme.comment)
+                            .text_xs()
+                            .cursor_pointer()
+                            .hover(|d| d.text_color(theme.foreground))
+                            .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                                |editor, _event, _window, cx| {
+                                    if let Some(ref mut fs) = editor.find_state {
+                                        fs.replace_visible = true;
+                                        cx.notify();
+                                    }
+                                },
+                            ))
+                            .child("Replace"),
+                    ),
+            )
+        };
+
+        let mut bar = div()
+            .id("find-bar")
+            .absolute()
+            .top(px(0.0))
+            .right(px(4.0))
+            .w(px(360.0))
+            .bg(bar_bg)
+            .border_1()
+            .border_color(border_color)
+            .rounded(px(4.0))
+            .py(px(4.0))
+            .px(px(8.0))
+            .shadow_lg()
+            .text_size(px(13.0))
+            .font(font("Segoe UI"))
+            .child(search_row);
+
+        if let Some(replace_el) = replace_row {
+            bar = bar.child(replace_el);
+        }
+
+        Some(bar.into_any_element())
     }
 
     fn compute_total_content_height(&self, rem_size: Pixels) -> f32 {
