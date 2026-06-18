@@ -215,9 +215,10 @@ impl Render for Editor {
         let input_blocked = self.input_blocked;
 
         // Pre-extract find match data for highlighting
-        let find_data: Option<(Vec<std::ops::Range<usize>>, Option<usize>)> =
+        let find_data: Option<(Vec<std::ops::Range<usize>>, Option<std::ops::Range<usize>>)> =
             self.find_state.as_ref().map(|fs| {
-                (fs.matches.clone(), fs.current_match)
+                let current_range = fs.current_match.and_then(|i| fs.matches.get(i).cloned());
+                (fs.matches.clone(), current_range)
             });
         let find_visible = self.find_state.as_ref().map_or(false, |fs| fs.visible && !fs.query.is_empty());
 
@@ -309,7 +310,7 @@ impl Render for Editor {
                 // Inject find match highlights
                 let (inline_highlight_ranges, inline_highlight_color) =
                     if find_visible
-                        && let Some((ref find_matches, _current)) = find_data
+                        && let Some((ref find_matches, ref find_current_range)) = find_data
                         && !find_matches.is_empty()
                     {
                         let line_start = snapshot.rope.line_to_byte(ix);
@@ -318,7 +319,8 @@ impl Render for Editor {
                         } else {
                             snapshot.rope.len_bytes()
                         };
-                        let mut ranges: Vec<Range<usize>> = Vec::new();
+                        let mut normal: Vec<Range<usize>> = Vec::new();
+                        let mut current: Option<Range<usize>> = None;
                         for m in find_matches.iter() {
                             if m.start >= line_end || m.end <= line_start {
                                 continue;
@@ -327,7 +329,18 @@ impl Render for Editor {
                             let rel_end = m.end.saturating_sub(line_start);
                             let rel_end = rel_end.min(line_end - line_start);
                             if rel_start < rel_end {
-                                ranges.push(rel_start..rel_end);
+                                let rel_range = rel_start..rel_end;
+                                if find_current_range.as_ref() == Some(m) {
+                                    current = Some(rel_range);
+                                } else {
+                                    normal.push(rel_range);
+                                }
+                            }
+                        }
+                        let mut ranges: Vec<Range<usize>> = normal;
+                        if let Some(ref cur) = current {
+                            if !ranges.contains(cur) {
+                                ranges.push(cur.clone());
                             }
                         }
                         let bg = {
@@ -633,6 +646,12 @@ impl Render for Editor {
                         }
                         let text = editor.state.buffer.text();
                         fs.search(&text);
+                        if let Some(idx) = fs.current_match {
+                            let r = fs.matches[idx].clone();
+                            editor.state.selection =
+                                crate::cursor::Selection::new(r.start, r.end);
+                            editor.scroll_to_cursor_pending = true;
+                        }
                         cx.notify();
                     }
                 },
