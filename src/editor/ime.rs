@@ -52,8 +52,8 @@ impl EntityInputHandler for Editor {
 
     fn replace_text_in_range(&mut self, replacement: Option<Range<usize>>, text: &str, w: &mut Window, cx: &mut Context<Self>) {
         // Find bar has focus — redirect text to find state instead of buffer
-        if let Some(ref mut fs) = self.find_state {
-            if fs.visible && fs.input_focused && !text.is_empty() {
+        if let Some(ref mut fs) = self.find_state
+            && fs.visible && fs.input_focused && !text.is_empty() {
                 // ASCII characters are already handled by handle_find_key in on_key_down
                 if text.len() == 1 && text.as_bytes()[0].is_ascii() {
                     cx.notify();
@@ -92,7 +92,6 @@ impl EntityInputHandler for Editor {
                 cx.notify();
                 return;
             }
-        }
 
         // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
@@ -196,11 +195,10 @@ impl EntityInputHandler for Editor {
     fn replace_and_mark_text_in_range(&mut self, range: Option<Range<usize>>, new: &str, _sel: Option<Range<usize>>, w: &mut Window, cx: &mut Context<Self>) {
         // Find bar has focus — IME composition preview is not shown in simple input,
         // final text will arrive through replace_text_in_range
-        if let Some(ref fs) = self.find_state {
-            if fs.visible && fs.input_focused {
+        if let Some(ref fs) = self.find_state
+            && fs.visible && fs.input_focused {
                 return;
             }
-        }
 
         let new_len = new.len();
         // IME cancellation: empty composition string means IME was aborted
@@ -239,11 +237,10 @@ impl EntityInputHandler for Editor {
 
     fn unmark_text(&mut self, _w: &mut Window, cx: &mut Context<Self>) {
         // Find bar has focus — IME composition is not tracked here
-        if let Some(ref fs) = self.find_state {
-            if fs.visible && fs.input_focused {
+        if let Some(ref fs) = self.find_state
+            && fs.visible && fs.input_focused {
                 return;
             }
-        }
         if let Some(mark) = self.ime_marked_range.take() {
             let mark_end = mark.end.min(self.state.buffer.len_bytes());
             if mark.start < mark_end {
