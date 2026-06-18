@@ -1262,27 +1262,13 @@ impl Editor {
                     }
                 }
             }
-            "tab" => {
-                if fs.replace_visible {
-                    fs.replace_input_focused = !fs.replace_input_focused;
-                }
+            "tab" if fs.replace_visible => {
+                fs.replace_input_focused = !fs.replace_input_focused;
             }
             _ => {
-                if let Some(key_char) = &keystroke.key_char {
-                    if fs.replace_input_focused {
-                        fs.replace_text.push_str(key_char);
-                    } else {
-                        fs.query.push_str(key_char);
-                        let text = self.state.buffer.text();
-                        fs.search(&text);
-                        if let Some(idx) = fs.current_match {
-                            let range = fs.matches[idx].clone();
-                            self.state.selection =
-                                crate::cursor::Selection::new(range.start, range.end);
-                            self.scroll_to_cursor_pending = true;
-                        }
-                    }
-                }
+                // Printable characters are inserted by replace_text_in_range
+                // (IME/WM_CHAR), not here. This avoids the double-path conflict
+                // that causes pinyin letters to leak into the search query.
             }
         }
         cx.notify();

@@ -999,12 +999,32 @@ impl Editor {
         };
 
         let query_display: gpui::SharedString = if fs.query.is_empty() {
-            "Search\u{2026}".into()
+            if fs.input_focused {
+                "\u{2502}".into() // cursor when empty and focused
+            } else {
+                "Search\u{2026}".into()
+            }
         } else {
-            fs.query.clone().into()
+            let mut s = fs.query.clone();
+            if fs.input_focused {
+                s.push('\u{2502}'); // vertical bar cursor
+            }
+            s.into()
         };
 
-        let replace_display: gpui::SharedString = fs.replace_text.clone().into();
+        let cursor_color = if fs.input_focused {
+            theme.purple
+        } else {
+            theme.foreground
+        };
+
+        let replace_display: gpui::SharedString = {
+            let mut s = fs.replace_text.clone();
+            if fs.input_focused && fs.replace_input_focused {
+                s.push('\u{2502}'); // cursor
+            }
+            s.into()
+        };
 
         let border_color = if !has_results && !fs.query.is_empty() {
             theme.red
@@ -1028,11 +1048,13 @@ impl Editor {
                     .py(px(2.0))
                     .bg(input_bg)
                     .rounded(px(3.0))
-                    .text_color(if !has_results && !fs.query.is_empty() { theme.red } else { theme.foreground })
+                    .text_color(if !has_results && !fs.query.is_empty() { theme.red } else { cursor_color })
                     .child(query_display)
                     .cursor(CursorStyle::IBeam)
                     .on_mouse_down(gpui::MouseButton::Left, cx.listener(
-                        |editor, _event, _window, cx| {
+                        |editor, _event, window, cx| {
+                            window.prevent_default();
+                            cx.stop_propagation();
                             if let Some(ref mut fs) = editor.find_state {
                                 fs.input_focused = true;
                                 fs.replace_input_focused = false;
@@ -1113,7 +1135,9 @@ impl Editor {
                             .child(replace_display)
                             .cursor(CursorStyle::IBeam)
                             .on_mouse_down(gpui::MouseButton::Left, cx.listener(
-                                |editor, _event, _window, cx| {
+                                |editor, _event, window, cx| {
+                                    window.prevent_default();
+                                    cx.stop_propagation();
                                     if let Some(ref mut fs) = editor.find_state {
                                         fs.input_focused = true;
                                         fs.replace_input_focused = true;
@@ -1192,6 +1216,12 @@ impl Editor {
             .shadow_lg()
             .text_size(px(13.0))
             .font(font("Segoe UI"))
+            .on_mouse_down(gpui::MouseButton::Left, cx.listener(
+                |_editor, _event, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                },
+            ))
             .child(search_row);
 
         if let Some(replace_el) = replace_row {
