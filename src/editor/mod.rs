@@ -58,6 +58,7 @@ pub use state::*;
 
 mod render;
 mod persistence;
+pub(crate) mod find;
 
 
 
