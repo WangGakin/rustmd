@@ -98,6 +98,7 @@ impl FindState {
         self.input_focused = false;
         self.replace_input_focused = false;
         self.replace_visible = false;
+        self.match_case = false;
     }
 
     /// Returns the byte range of the current match, if any.
@@ -211,6 +212,7 @@ mod tests {
         assert!(fs.query.is_empty());
         assert!(fs.matches.is_empty());
         assert_eq!(fs.match_count(), 0);
+        assert!(!fs.match_case);
     }
 
     #[test]
