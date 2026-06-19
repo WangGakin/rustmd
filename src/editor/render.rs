@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Range;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -40,32 +39,45 @@ impl Render for Editor {
         let cursor_line = self.state.buffer.byte_to_line(cursor_offset);
         let line_start = self.state.buffer.line_to_byte(cursor_line);
         let cursor_col = cursor_offset - line_start;
-        // Build full nested context by walking up the tree
-        let context_markers = self.state.build_nested_context(cursor_offset);
+        // Build full nested context by walking up the tree — cached per (version, cursor_offset)
+        let context_markers = match &self.cached_nested_context {
+            Some((v, offset, markers)) if *v == buffer_version && *offset == cursor_offset => {
+                markers.clone()
+            }
+            _ => {
+                let markers = self.state.build_nested_context(cursor_offset);
+                self.cached_nested_context =
+                    Some((buffer_version, cursor_offset, markers.clone()));
+                markers
+            }
+        };
         let heading_level = self.find_current_heading(cursor_line);
         let total_lines = self.state.buffer.line_count();
 
-        let first_visible_line = self.list_state.logical_scroll_top().item_ix;
-        // Estimate last visible line by scanning from first visible until out of viewport
-        let viewport = self.list_state.viewport_bounds();
-        let mut last_visible_line = first_visible_line;
-        for i in first_visible_line..total_lines {
-            if let Some(bounds) = self.list_state.bounds_for_item(i) {
-                if bounds.origin.y <= viewport.origin.y + viewport.size.height {
-                    last_visible_line = i;
-                } else {
-                    break;
-                }
-            } else {
-                break;
+        let scroll_top_ix = self.list_state.logical_scroll_top().item_ix;
+        // Estimate last visible line — cached per (buffer_version, scroll_top_ix)
+        let (first_visible_line, last_visible_line) = match &self.cached_visible_range {
+            Some((v, st, first, last)) if *v == buffer_version && *st == scroll_top_ix => {
+                (*first, *last)
             }
-        }
-
-        // Detect naked URLs in visible lines — only when content changed
-        let _naked_urls_by_line = if content_changed {
-            self.detect_naked_urls_in_range(first_visible_line, last_visible_line + 1)
-        } else {
-            HashMap::new()
+            _ => {
+                let first = scroll_top_ix;
+                let viewport = self.list_state.viewport_bounds();
+                let mut last = first;
+                for i in first..total_lines {
+                    if let Some(bounds) = self.list_state.bounds_for_item(i) {
+                        if bounds.origin.y <= viewport.origin.y + viewport.size.height {
+                            last = i;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                self.cached_visible_range = Some((buffer_version, scroll_top_ix, first, last));
+                (first, last)
+            }
         };
 
         // Update autocomplete only when cursor position changed (not on every render)
@@ -249,9 +261,8 @@ impl Render for Editor {
                                   csp: Option<Rc<Cell<CursorScreenPosition>>>|
                  -> Line {
                     let line_markers = snap.line_markers(line_idx);
-                    let mut inline_styles = snap.inline_styles_for_line(line_idx);
-                    inline_styles.extend(extra_styles);
-                    inline_styles.sort_by_key(|s| s.full_range.start);
+                    let inline_styles = snap.inline_styles_for_line(line_idx);
+                    // inline_styles_for_line already returns sorted results
 
                     let code_highlights: Vec<_> = snap
                         .code_highlights_for_line(line_idx)
@@ -1275,7 +1286,19 @@ impl Editor {
     ) -> Option<AnyElement> {
         let viewport = self.list_state.viewport_bounds();
         let viewport_h = f32::from(viewport.size.height);
-        let total_h = self.compute_total_content_height(rem_size);
+        let scroll_top_ix = self.list_state.logical_scroll_top().item_ix;
+
+        // Cache expensive total_h and scroll_offset computations
+        let buffer_version = self.state.buffer.version();
+        let (total_h, scroll_offset) = match &self.cached_scrollbar {
+            Some((v, st, th, so)) if *v == buffer_version && *st == scroll_top_ix => (*th, *so),
+            _ => {
+                let th = self.compute_total_content_height(rem_size);
+                let so = self.compute_scroll_offset_pixels(rem_size);
+                self.cached_scrollbar = Some((buffer_version, scroll_top_ix, th, so));
+                (th, so)
+            }
+        };
 
         if total_h <= viewport_h {
             return None;
@@ -1284,7 +1307,6 @@ impl Editor {
         let track_h = viewport_h;
         let min_thumb_h = 20.0f32;
         let thumb_h = ((viewport_h / total_h) * track_h).max(min_thumb_h);
-        let scroll_offset = self.compute_scroll_offset_pixels(rem_size);
         let thumb_top = if total_h > 0.0 {
             (scroll_offset / total_h) * track_h
         } else {

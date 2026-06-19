@@ -14,6 +14,12 @@ pub struct FindState {
     pub input_focused: bool,
     /// When true, the replace input field is focused (else search input).
     pub replace_input_focused: bool,
+    /// Cached compiled regex to avoid recompilation on every search.
+    compiled_re: Option<regex::Regex>,
+    /// The query string that was used to compile the cached regex.
+    compiled_query: String,
+    /// The case mode that was used to compile the cached regex.
+    compiled_case: bool,
 }
 
 impl FindState {
@@ -28,27 +34,53 @@ impl FindState {
             replace_visible: false,
             input_focused: false,
             replace_input_focused: false,
+            compiled_re: None,
+            compiled_query: String::new(),
+            compiled_case: false,
         }
     }
 
     /// Search the full text for all matches of the current query.
     /// Called whenever the query or match_case changes.
+    /// Caches the compiled regex to avoid recompilation on every keystroke.
     pub fn search(&mut self, text: &str) {
         self.matches.clear();
         self.current_match = None;
         if self.query.is_empty() {
             return;
         }
-        let pattern = regex::escape(&self.query);
-        let re = if self.match_case {
-            regex::Regex::new(&pattern).unwrap()
+        let re = if self.compiled_query == self.query && self.compiled_case == self.match_case {
+            // Reuse cached regex
+            self.compiled_re.as_ref().unwrap()
         } else {
-            regex::Regex::new(&format!("(?i){}", pattern)).unwrap()
+            let pattern = regex::escape(&self.query);
+            let compiled = if self.match_case {
+                regex::Regex::new(&pattern).unwrap()
+            } else {
+                regex::Regex::new(&format!("(?i){}", pattern)).unwrap()
+            };
+            self.compiled_query = self.query.clone();
+            self.compiled_case = self.match_case;
+            self.compiled_re = Some(compiled);
+            self.compiled_re.as_ref().unwrap()
         };
         self.matches = re.find_iter(text).map(|m| m.range()).collect();
         if !self.matches.is_empty() {
             self.current_match = Some(0);
         }
+    }
+
+    /// Reset all state (close the bar).
+    pub fn close(&mut self) {
+        self.visible = false;
+        self.query.clear();
+        self.replace_text.clear();
+        self.matches.clear();
+        self.current_match = None;
+        self.input_focused = false;
+        self.replace_input_focused = false;
+        self.replace_visible = false;
+        self.match_case = false;
     }
 
     /// Move to the next match. Wraps around.

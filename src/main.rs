@@ -259,12 +259,12 @@ impl Render for RootView {
         self.file_info.path = editor.file_path().cloned();
         self.file_info.dirty = editor.is_dirty();
         let status_info = editor.status_info().clone();
-        self.file_info.recent_files.clone_from(&self.recent_files);
 
         // Only refresh from global state when the popup is open (user-initiated action).
         // On idle frames we use the cached copy to avoid Mutex lock + Vec clone.
         if self.recent_files_open {
             self.recent_files = rustmd::user_config::recent_files();
+            self.file_info.recent_files.clone_from(&self.recent_files);
         }
         let _ = editor;
 

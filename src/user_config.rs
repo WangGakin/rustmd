@@ -182,8 +182,10 @@ pub fn save_config(cfg: &UserConfig) {
     }
 }
 
-static RECENT_FILES: LazyLock<Mutex<Vec<String>>> = LazyLock::new(|| {
-    Mutex::new(load_config().recent_files)
+/// In-memory cache of the full UserConfig to avoid disk reads on every
+/// recent-file update. Initialized on first access with load_config().
+static CACHED_CONFIG: LazyLock<Mutex<UserConfig>> = LazyLock::new(|| {
+    Mutex::new(load_config())
 });
 
 pub fn add_recent_file(path: &Path) {
@@ -191,30 +193,23 @@ pub fn add_recent_file(path: &Path) {
     if path_str.is_empty() {
         return;
     }
-    let files = {
-        let mut files = RECENT_FILES.lock().unwrap_or_else(|e| e.into_inner());
-        files.retain(|f| f != &path_str);
-        files.insert(0, path_str);
-        files.truncate(5);
-        files.clone()
-    };
-    let mut cfg = load_config();
-    cfg.recent_files = files;
+    let mut cfg = CACHED_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
+    cfg.recent_files.retain(|f| f != &path_str);
+    cfg.recent_files.insert(0, path_str);
+    cfg.recent_files.truncate(5);
     save_config(&cfg);
 }
 
 pub fn clear_recent_files() {
     {
-        let mut files = RECENT_FILES.lock().unwrap_or_else(|e| e.into_inner());
-        files.clear();
+        let mut cfg = CACHED_CONFIG.lock().unwrap_or_else(|e| e.into_inner());
+        cfg.recent_files.clear();
+        save_config(&cfg);
     }
-    let mut cfg = load_config();
-    cfg.recent_files.clear();
-    save_config(&cfg);
 }
 
 pub fn recent_files() -> Vec<String> {
-    RECENT_FILES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    CACHED_CONFIG.lock().unwrap_or_else(|e| e.into_inner()).recent_files.clone()
 }
 
 fn default_font_size() -> f32 {

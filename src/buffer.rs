@@ -293,15 +293,18 @@ impl BufferContent {
         }
         self.tree = self.parser.parse_rope(&self.text, self.tree.as_ref());
 
-        self.normalize_ordered_lists();
+        // Apply ordered list normalization in the same parse cycle.
+        // Only re-parses if corrections were actually needed — avoiding a
+        // redundant second parse on every keystroke.
+        self.apply_ordered_list_corrections();
         self.update_caches();
         self.code_highlight_cache.valid = false;
         self.version += 1;
     }
 
-    /// Normalize ordered list numbering - ensure sequential numbers (1, 2, 3...).
-    /// Modifies the rope directly and re-parses if changes were made.
-    fn normalize_ordered_lists(&mut self) -> bool {
+    /// Check for ordered list numbering that needs correction, apply changes,
+    /// and re-parse once. Returns true if corrections were applied.
+    fn apply_ordered_list_corrections(&mut self) -> bool {
         let Some(tree) = &self.tree else {
             return false;
         };
@@ -328,6 +331,7 @@ impl BufferContent {
             self.text.insert(char_offset, &new_marker);
         }
 
+        // Re-parse once after all corrections are applied
         self.tree = self.parser.parse_rope(&self.text, self.tree.as_ref());
         true
     }
@@ -533,9 +537,10 @@ impl BufferContent {
         let line_start = self.line_to_byte(line_idx);
         let char_start = self.text.byte_to_char(line_start);
         let char_end = self.text.byte_to_char(byte_offset.min(self.text.len_bytes()));
+        // Use sequential char iteration (O(1) amortized) instead of random-access rope.char()
         let mut utf16 = 0u32;
-        for ci in char_start..char_end {
-            utf16 += self.text.char(ci).len_utf16() as u32;
+        for ch in self.text.chars_at(char_start).take(char_end - char_start) {
+            utf16 += ch.len_utf16() as u32;
         }
         prefix + utf16 as usize
     }

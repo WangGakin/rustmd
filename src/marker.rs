@@ -46,6 +46,9 @@ pub struct ParsedNodes {
     /// Precomputed continuation markers for block_quote_marker/block_continuation nodes.
     /// Keyed by node start byte offset. Avoids calling parse_continuation during render.
     pub continuation_markers: HashMap<usize, Vec<Marker>>,
+    /// Whether the document contains any checkbox markers.
+    /// Used as a fast-path to skip checkbox propagation when not needed.
+    pub has_checkboxes: bool,
 }
 
 /// The unordered list marker character.
@@ -811,6 +814,7 @@ pub fn collect_node_infos(root: &Node, rope: &Rope) -> ParsedNodes {
     let mut continuation_markers = HashMap::new();
     let mut checked_task_stack: Vec<(usize, bool)> = Vec::new();
     let mut code_block_end: Option<usize> = None;
+    let mut has_checkboxes = false;
 
     loop {
         let node = cursor.node();
@@ -831,7 +835,14 @@ pub fn collect_node_infos(root: &Node, rope: &Rope) -> ParsedNodes {
 
         if node.kind() == "list_item" {
             let is_checked = list_item_is_checked_task(&node);
+            if is_checked {
+                has_checkboxes = true;
+            }
             checked_task_stack.push((node.end_byte(), is_checked));
+        }
+
+        if node.kind() == "task_list_marker_checked" || node.kind() == "task_list_marker_unchecked" {
+            has_checkboxes = true;
         }
 
         if node.kind() == "fenced_code_block" {
@@ -942,7 +953,7 @@ pub fn collect_node_infos(root: &Node, rope: &Rope) -> ParsedNodes {
         }
         loop {
             if !cursor.goto_parent() {
-                return ParsedNodes { nodes, code_blocks, continuation_markers };
+                return ParsedNodes { nodes, code_blocks, continuation_markers, has_checkboxes };
             }
             if cursor.goto_next_sibling() {
                 break;

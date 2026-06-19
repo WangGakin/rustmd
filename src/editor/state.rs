@@ -1389,6 +1389,10 @@ impl EditorState {
     /// If current line has a checkbox, propagate from it.
     /// If not, check if we're inside a parent checkbox and re-evaluate it.
     fn propagate_checkbox_after_edit(&mut self) {
+        // Fast path: skip all tree traversals if document has no checkboxes
+        if !self.buffer.parsed().has_checkboxes {
+            return;
+        }
         let cursor_offset = self.cursor().offset;
         let line_idx = self.buffer.byte_to_line(cursor_offset);
         let markers = self.buffer.line_markers(line_idx);

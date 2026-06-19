@@ -10,7 +10,6 @@ pub use action::{
 pub use config::EditorConfig;
 pub use theme::EditorTheme;
 
-use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::cell::Cell;
@@ -45,7 +44,6 @@ impl Render for EmptyDragView {
 }
 
 use crate::cursor::{Cursor, Selection};
-use crate::inline::{NakedUrl, detect_naked_urls};
 use crate::key_mode::KeyMode;
 use crate::line::CursorScreenPosition;
 use crate::marker::MarkerKind;
@@ -126,6 +124,13 @@ pub struct Editor {
     /// Controls cursor blink visibility. Toggled by a background timer.
     cursor_blink_visible: bool,
     find_state: Option<find::FindState>,
+    /// Cached nested context markers (build_nested_context result).
+    /// Recalculated only when cursor offset or buffer version changes.
+    cached_nested_context: Option<(u64, usize, Vec<MarkerKind>)>,
+    /// Cached scrollbar: (buffer_version, scroll_top_item_ix, total_h, scroll_offset_px).
+    cached_scrollbar: Option<(u64, usize, f32, f32)>,
+    /// Cached visible line range: (buffer_version, scroll_top_item_ix, first_visible, last_visible).
+    cached_visible_range: Option<(u64, usize, usize, usize)>,
 }
 
 impl Editor {
@@ -177,6 +182,9 @@ impl Editor {
             user_message_lines: Vec::new(),
             cursor_blink_visible: true,
             find_state: None,
+            cached_nested_context: None,
+            cached_scrollbar: None,
+            cached_visible_range: None,
         }
     }
 
@@ -228,52 +236,6 @@ impl Editor {
     }
 
 
-
-    /// Detect naked URLs in a range of lines.
-    /// Returns URLs indexed by line number.
-    fn detect_naked_urls_in_range(
-        &mut self,
-        start_line: usize,
-        end_line: usize,
-    ) -> HashMap<usize, Vec<NakedUrl>> {
-        let snapshot = self.state.buffer.render_snapshot();
-        let mut urls_by_line = HashMap::new();
-
-        for line_idx in start_line..end_line.min(snapshot.line_count()) {
-            let line = snapshot.line_markers(line_idx);
-            let line_range = line.range.clone();
-            let line_slice = snapshot.rope.byte_slice(line_range.clone());
-            let line_text: std::borrow::Cow<'_, str> = line_slice
-                .as_str()
-                .map(std::borrow::Cow::Borrowed)
-                .unwrap_or_else(|| {
-                    let char_start = snapshot.rope.byte_to_char(line_range.start);
-                    let char_end = snapshot.rope.byte_to_char(line_range.end);
-                    std::borrow::Cow::Owned(snapshot.rope.slice(char_start..char_end).to_string())
-                });
-
-            let inline_styles = snapshot.inline_styles_for_line(line_idx);
-
-            let code_ranges: Vec<_> = inline_styles
-                .iter()
-                .filter(|s| s.style.code)
-                .map(|s| s.full_range.clone())
-                .collect();
-
-            let link_ranges: Vec<_> = inline_styles
-                .iter()
-                .filter(|s| s.link_url.is_some())
-                .map(|s| s.full_range.clone())
-                .collect();
-
-            let urls = detect_naked_urls(&line_text, line_range.start, &code_ranges, &link_ranges);
-            if !urls.is_empty() {
-                urls_by_line.insert(line_idx, urls);
-            }
-        }
-
-        urls_by_line
-    }
 
 
 

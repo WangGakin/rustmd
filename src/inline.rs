@@ -3,55 +3,8 @@
 //! This module extracts styled regions (bold, italic, code, links, etc.)
 //! from the inline parse trees.
 
-use regex::Regex;
 use ropey::Rope;
 use std::ops::Range;
-use std::sync::LazyLock;
-
-// General URL pattern for naked URL detection
-static NAKED_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https?://[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)+(?::\d+)?(?:/[^\s<>\[\]()]*)?").unwrap()
-});
-
-/// A naked URL detected in text (not inside []() markdown link syntax).
-#[derive(Debug, Clone)]
-pub struct NakedUrl {
-    /// The full URL text.
-    pub url: String,
-    /// Byte range in the rope where this URL was found.
-    pub byte_range: Range<usize>,
-}
-
-/// Detect naked URLs in a single line of text.
-pub fn detect_naked_urls(
-    line: &str,
-    line_byte_offset: usize,
-    code_ranges: &[Range<usize>],
-    link_ranges: &[Range<usize>],
-) -> Vec<NakedUrl> {
-    let mut urls = Vec::new();
-
-    let is_in_code = |abs_pos: usize| -> bool { code_ranges.iter().any(|r| r.contains(&abs_pos)) };
-    let is_in_link = |abs_pos: usize| -> bool { link_ranges.iter().any(|r| r.contains(&abs_pos)) };
-
-    for m in NAKED_URL_RE.find_iter(line) {
-        let abs_range = (line_byte_offset + m.start())..(line_byte_offset + m.end());
-
-        // Skip if inside code span or markdown link
-        if is_in_code(abs_range.start) || is_in_link(abs_range.start) {
-            continue;
-        }
-
-        let url = m.as_str().to_string();
-
-        urls.push(NakedUrl {
-            url,
-            byte_range: abs_range,
-        });
-    }
-
-    urls
-}
 
 use tree_sitter::Node;
 

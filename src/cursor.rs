@@ -264,18 +264,22 @@ impl Selection {
             return Self::new(offset, char_end.min(len_bytes));
         }
 
+        // Use sequential chunk iteration for O(1) amortized per-char access
         let mut start_char_idx = char_idx;
-        for i in (0..char_idx).rev() {
-            if is_word_char(rope.char(i)) {
+        for (i, ch) in rope.chars().enumerate() {
+            if i >= char_idx {
+                break;
+            }
+            if is_word_char(ch) {
                 start_char_idx = i;
             } else {
-                break;
+                start_char_idx = i + 1;
             }
         }
 
         let mut end_char_idx = char_idx + 1;
-        for i in (char_idx + 1)..char_count {
-            if is_word_char(rope.char(i)) {
+        for (i, ch) in rope.chars().enumerate().skip(char_idx + 1) {
+            if is_word_char(ch) {
                 end_char_idx = i + 1;
             } else {
                 break;
