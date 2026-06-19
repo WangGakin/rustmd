@@ -170,8 +170,10 @@ impl Render for Editor {
         let cursor_line_changed = self.last_cursor_line != Some(cursor_line);
         self.last_cursor_line = Some(cursor_line);
 
-        // When scroll is requested (e.g., typing) or in streaming mode,
-        // check if cursor line is near the bottom edge and scroll.
+        // When scroll is requested (e.g., find-next, typing) or in streaming mode,
+        // ensure the cursor line is visible. Differs from the cursor_line_changed
+        // branch below: this path always scrolls (not just on viewport exit) and
+        // uses a scroll_buffer zone for a smoother typing experience.
         if self.scroll_to_cursor_pending || self.streaming_mode {
             self.scroll_to_cursor_pending = false;
             let scroll_buffer = self.config.line_height.to_pixels(window.rem_size());
@@ -183,14 +185,23 @@ impl Render for Editor {
                 } else {
                     cursor_bounds.origin.y + cursor_bounds.size.height
                 };
-                let viewport_bottom = viewport.origin.y + viewport.size.height;
-                // Only scroll if cursor is near bottom edge (within buffer zone)
-                if cursor_bottom > viewport_bottom - scroll_buffer {
+                let cursor_top = cursor_bounds.origin.y;
+                let viewport_top = viewport.origin.y;
+                let viewport_bottom = viewport_top + viewport.size.height;
+                // Scroll if cursor is above viewport or near bottom edge
+                if cursor_top < viewport_top || cursor_bottom > viewport_bottom - scroll_buffer {
                     self.list_state.scroll_to_reveal_item(cursor_line);
                     self.list_state.scroll_by(scroll_buffer);
                 }
             } else {
-                self.list_state.scroll_to_reveal_item(cursor_line);
+                // Item not measured: use direct scroll_to to avoid scroll_to_reveal_item's
+                // zero-height issue with unmeasured items.
+                let item_count = self.list_state.item_count();
+                let target_line = cursor_line.min(item_count.saturating_sub(1));
+                self.list_state.scroll_to(gpui::ListOffset {
+                    item_ix: target_line,
+                    offset_in_item: px(0.0),
+                });
             }
         } else if cursor_line_changed {
             if let Some(cursor_bounds) = self.list_state.bounds_for_item(cursor_line) {
