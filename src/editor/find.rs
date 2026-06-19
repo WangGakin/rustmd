@@ -121,19 +121,6 @@ impl FindState {
         self.matches.len()
     }
 
-    /// Reset all state (close the bar).
-    pub fn close(&mut self) {
-        self.visible = false;
-        self.query.clear();
-        self.replace_text.clear();
-        self.matches.clear();
-        self.current_match = None;
-        self.input_focused = false;
-        self.replace_input_focused = false;
-        self.replace_visible = false;
-        self.match_case = false;
-    }
-
     /// Returns the byte range of the current match, if any.
     pub fn current_match_range(&self) -> Option<Range<usize>> {
         self.current_match.map(|i| self.matches[i].clone())

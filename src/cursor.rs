@@ -264,15 +264,15 @@ impl Selection {
             return Self::new(offset, char_end.min(len_bytes));
         }
 
-        // Use sequential chunk iteration for O(1) amortized per-char access
-        let mut start_char_idx = char_idx;
+        // Use sequential chunk iteration for O(1) amortized per-char access.
+        // Scan forward to find the last non-word-char before the click;
+        // the word starts right after it.
+        let mut start_char_idx = 0;
         for (i, ch) in rope.chars().enumerate() {
             if i >= char_idx {
                 break;
             }
-            if is_word_char(ch) {
-                start_char_idx = i;
-            } else {
+            if !is_word_char(ch) {
                 start_char_idx = i + 1;
             }
         }

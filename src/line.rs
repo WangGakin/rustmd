@@ -152,6 +152,17 @@ pub fn visual_to_buffer_pos(
     buffer_pos.min(line_end)
 }
 
+/// Snap a byte offset to the nearest valid UTF-8 character boundary.
+/// If `index` falls in the middle of a multi-byte sequence (e.g. CJK / 3-byte UTF-8),
+/// walk backward to the nearest valid char boundary.
+fn snap_to_char_boundary(text: &str, index: usize) -> usize {
+    let mut idx = index.min(text.len());
+    while idx > 0 && !text.is_char_boundary(idx) {
+        idx -= 1;
+    }
+    idx
+}
+
 #[derive(Clone)]
 pub struct LineTheme {
     pub text_color: Rgba,
@@ -1355,6 +1366,7 @@ impl RenderOnce for Line {
                 runs
             }
         };
+        let shared_text_captured = shared_text.clone();
         let styled_text = StyledText::new(shared_text).with_runs(validated_runs);
         let text_layout = styled_text.layout().clone();
 
@@ -1479,6 +1491,7 @@ impl RenderOnce for Line {
                         } else {
                             vec![invisible_run]
                         };
+                        let shared_text_hr = shared_text.clone();
                         let styled_text =
                             StyledText::new(shared_text).with_runs(validated_runs);
                         let text_layout = styled_text.layout().clone();
@@ -1502,11 +1515,13 @@ impl RenderOnce for Line {
                                 if input_blocked {
                                     return;
                                 }
-                                let visual_index =
+                                let raw_index =
                                     match text_layout.index_for_position(event.position) {
                                         Ok(idx) => idx,
                                         Err(idx) => idx,
                                     };
+                                let visual_index =
+                                    snap_to_char_boundary(shared_text_hr.as_ref(), raw_index);
                                 let buffer_offset = line_range.start + visual_index;
                                 let buffer_offset = buffer_offset.min(line_range.end);
                                 window.dispatch_action(
@@ -1730,6 +1745,7 @@ impl RenderOnce for Line {
             let hidden_regions_for_move = hidden_regions;
             let collapsed_regions_for_click = collapsed_regions.clone();
             let text_font_for_click = self.theme.text_font.clone();
+            let display_text_for_click = shared_text_captured.clone();
 
             // Find the checkbox click range in the content.
             // The checkbox "[ ]" or "[x]" is now rendered as part of content, not substitution.
@@ -1756,10 +1772,12 @@ impl RenderOnce for Line {
             text_container = text_container.on_mouse_down(
                 MouseButton::Left,
                 move |event: &MouseDownEvent, window, cx| {
-                    let visual_index = match layout_for_click.index_for_position(event.position) {
+                    let raw_index = match layout_for_click.index_for_position(event.position) {
                         Ok(idx) => idx,
                         Err(idx) => idx,
                     };
+                    let visual_index =
+                        snap_to_char_boundary(display_text_for_click.as_ref(), raw_index);
 
                     if let Some(ref range) = checkbox_click_range
                         && visual_index >= range.start
@@ -1840,6 +1858,7 @@ impl RenderOnce for Line {
             let content_range = content_range_for_handlers;
             let collapsed_regions_for_move = collapsed_regions;
             let text_font_for_move = self.theme.text_font.clone();
+            let display_text_for_move = shared_text_captured.clone();
 
             // Checkbox hover range - checkbox is now at start of content (after spacer)
             let checkbox_hover_range: Option<Range<usize>> = if self.line.checkbox().is_some() {
@@ -1861,11 +1880,13 @@ impl RenderOnce for Line {
             text_container =
                 text_container.on_mouse_move(move |event: &MouseMoveEvent, window, cx| {
                     if event.pressed_button == Some(MouseButton::Left) {
-                        let visual_index = match layout_for_move.index_for_position(event.position)
+                        let raw_index = match layout_for_move.index_for_position(event.position)
                         {
                             Ok(idx) => idx,
                             Err(idx) => idx,
                         };
+                        let visual_index =
+                            snap_to_char_boundary(display_text_for_move.as_ref(), raw_index);
 
                         let content_visual_index = visual_index.saturating_sub(prefix_len);
 
@@ -1908,10 +1929,12 @@ impl RenderOnce for Line {
                         );
                     }
 
-                    let visual_index = match layout_for_move.index_for_position(event.position) {
+                    let raw_index = match layout_for_move.index_for_position(event.position) {
                         Ok(idx) => idx,
                         Err(idx) => idx,
                     };
+                    let visual_index =
+                        snap_to_char_boundary(display_text_for_move.as_ref(), raw_index);
 
                     let hovering_checkbox = checkbox_hover_range.as_ref().is_some_and(|range| {
                         visual_index >= range.start && visual_index < range.end

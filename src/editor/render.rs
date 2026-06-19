@@ -253,7 +253,7 @@ impl Render for Editor {
                 // Helper to build a Line element from a snapshot
                 let build_line = |snap: &RenderSnapshot,
                                   line_idx: usize,
-                                  extra_styles: Vec<StyledRegion>,
+                                  _extra_styles: Vec<StyledRegion>,
                                   line_background: Option<Rgba>,
                                   inline_highlight_ranges: Vec<Range<usize>>,
                                   inline_highlight_color: Option<Rgba>,
