@@ -43,6 +43,7 @@ pub mod config;
 pub mod cursor;
 pub mod editor;
 pub mod file_ops;
+pub mod file_explorer;
 pub mod highlight;
 pub mod inline;
 pub mod key_mode;

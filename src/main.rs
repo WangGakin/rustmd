@@ -10,6 +10,7 @@ use rustmd::config::Config;
 use rustmd::editor::ime::EditorImeElement;
 use rustmd::editor::{CenterLine, Editor, EditorConfig, EditorTheme};
 use rustmd::file_ops::{ClearRecentFiles, NewFile, OpenFile, OpenRecentFile, Save, SaveAs};
+use rustmd::file_explorer::{self, ExplorerNextPage, ExplorerPrevPage, OpenExplorerFile, ToggleFileExplorer};
 use rustmd::key_mode::KeyMode;
 use rustmd::status_bar::status_bar;
 use rustmd::title_bar::{title_bar, FileInfo, ToggleRecentFiles};
@@ -114,6 +115,9 @@ fn main() {
                         about_open: false,
                         recent_files_open: false,
                         recent_files: files,
+                        file_explorer_open: false,
+                        explorer_files: Vec::new(),
+                        explorer_page: 0,
                     }
                 })
             },
@@ -170,6 +174,9 @@ fn open_new_window(cx: &mut App) {
                     about_open: false,
                     recent_files_open: false,
                     recent_files: files,
+                    file_explorer_open: false,
+                    explorer_page: 0,
+                    explorer_files: Vec::new(),
                 }
             })
         },
@@ -234,19 +241,24 @@ fn open_new_window_with_file(path: PathBuf, cx: &mut App) {
                     about_open: false,
                     recent_files_open: false,
                     recent_files: files,
+                    explorer_page: 0,
+                    file_explorer_open: false,
+                    explorer_files: Vec::new(),
                 }
             })
         },
     )
     .unwrap();
 }
-
 struct RootView {
     editor: Entity<Editor>,
     file_info: FileInfo,
     about_open: bool,
     recent_files_open: bool,
     recent_files: Vec<String>,
+    file_explorer_open: bool,
+    explorer_files: Vec<PathBuf>,
+    explorer_page: usize,
 }
 
 impl Render for RootView {
@@ -299,29 +311,28 @@ impl Render for RootView {
 
                                      let should_close = match choice {
                                          rustmd::file_ops::DiscardChoice::Save => {
-                                             let result = cx.update(|cx| {
-                                                 if let Some(editor) = weak.upgrade() {
-                                                     editor.update(cx, |editor, cx| {
-                                                         editor.save(cx);
-                                                         !editor.is_dirty()
-                                                     })
-                                                 } else {
-                                                     false
-                                                 }
-                                             }).ok().unwrap_or(false);
-                                             result
+                                            cx.update(|cx| {
+                                                if let Some(editor) = weak.upgrade() {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.save(cx);
+                                                        !editor.is_dirty()
+                                                    })
+                                                } else {
+                                                    false
+                                                }
+                                            }).ok().unwrap_or(false)
                                          }
                                          rustmd::file_ops::DiscardChoice::Cancel => false,
                                          rustmd::file_ops::DiscardChoice::DontSave => true,
                                      };
 
-                                     if should_close {
-                                        if cx.update_window(win_handle, |_, window, _cx| {
-                                             window.remove_window();
-                                         }).is_err() {
-                                             log::error!("CloseWindow: window not found during async removal");
-                                         }
-                                     }
+                                    if should_close
+                                        && cx.update_window(win_handle, |_, window, _cx| {
+                                            window.remove_window();
+                                        }).is_err()
+                                    {
+                                        log::error!("CloseWindow: window not found during async removal");
+                                    }
                                  })
                                  .detach();
                                } else {
@@ -382,6 +393,34 @@ impl Render for RootView {
                         },
                     ))
                     .on_action(cx.listener(
+                        |this: &mut RootView, _: &ToggleFileExplorer, _window, cx| {
+                            this.file_explorer_open = !this.file_explorer_open;
+                            if this.file_explorer_open {
+                                let folder = this
+                                    .editor
+                                    .read(cx)
+                                    .file_path()
+                                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                                this.explorer_files = file_explorer::scan_folder(&folder);
+                                this.explorer_page = 0;
+                            }
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut RootView, _: &ExplorerPrevPage, _window, _cx| {
+                            this.explorer_page = this.explorer_page.saturating_sub(1);
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut RootView, _: &ExplorerNextPage, _window, _cx| {
+                            let total = this.explorer_files.len().div_ceil(file_explorer::PAGE_SIZE);
+                            if this.explorer_page + 1 < total {
+                                this.explorer_page += 1;
+                            }
+                        },
+                    ))
+                    .on_action(cx.listener(
                         |this: &mut RootView, action: &OpenRecentFile, window, cx| {
                             let index = action.0;
                             let Some(path_str) = this.recent_files.get(index) else {
@@ -439,6 +478,65 @@ impl Render for RootView {
                                 let _ = cx.update_window(win_handle, |_, window, cx| {
                                     window.refresh();
                                     window.dispatch_action(ToggleRecentFiles.boxed_clone(), cx);
+                                });
+                            })
+                            .detach();
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this: &mut RootView, action: &OpenExplorerFile, window, cx| {
+                            let path = action.0.clone();
+                            let weak = this.editor.downgrade();
+                            let is_dirty = this.editor.read(cx).is_dirty();
+                            let win_handle = window.window_handle();
+                            cx.spawn(async move |_tx, cx| {
+                                let (should_open, needs_save) = if is_dirty {
+                                    match rustmd::file_ops::confirm_discard() {
+                                        rustmd::file_ops::DiscardChoice::Save => (true, true),
+                                        rustmd::file_ops::DiscardChoice::Cancel => (false, false),
+                                        rustmd::file_ops::DiscardChoice::DontSave => (true, false),
+                                    }
+                                } else {
+                                    (true, false)
+                                };
+
+                                if !should_open {
+                                    return;
+                                }
+
+                                if needs_save {
+                                    let _ = cx.update(|cx| {
+                                        if let Some(editor) = weak.upgrade() {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.save(cx);
+                                                editor.is_dirty()
+                                            })
+                                        } else {
+                                            false
+                                        }
+                                    });
+                                    let still_dirty: bool = cx.update(|cx| {
+                                        if let Some(e) = weak.upgrade() {
+                                            e.read(cx).is_dirty()
+                                        } else {
+                                            true
+                                        }
+                                    }).ok().unwrap_or(true);
+                                    if still_dirty {
+                                        return;
+                                    }
+                                }
+
+                                let _ = cx.update(|cx| {
+                                    if let Some(editor) = weak.upgrade() {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.open_file_at(path, cx);
+                                        })
+                                    }
+                                });
+                                let _ = cx.update_window(win_handle, |_, window, cx| {
+                                    window.refresh();
+                                    window.dispatch_action(ToggleFileExplorer.boxed_clone(), cx);
                                 });
                             })
                             .detach();
@@ -608,6 +706,34 @@ impl Render for RootView {
                                                 window.dispatch_action(ClearRecentFiles.boxed_clone(), cx);
                                             })
                                     ),
+                            )
+                    })
+                    .when(self.file_explorer_open, |parent| {
+                        let theme_clone = theme.clone();
+                        let folder = self.file_info.path.as_ref()
+                            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+                        let files = self.explorer_files.clone();
+                        let current = self.file_info.path.clone();
+                        parent
+                            .child(
+                                div()
+                                    .absolute()
+                                    .size_full()
+                                    .top_0()
+                                    .left_0()
+                                    .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                        window.dispatch_action(ToggleFileExplorer.boxed_clone(), cx);
+                                    })
+                            )
+                            .child(
+                                file_explorer::file_explorer_panel(
+                                    &folder,
+                                    &files,
+                                    current.as_ref(),
+                                    self.explorer_page,
+                                    &theme_clone,
+                                )
                             )
                     }),
             )

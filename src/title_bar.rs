@@ -7,6 +7,7 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, HTCAPTION, WM_NCLBUT
 use crate::editor::EditorTheme;
 use crate::menu;
 use crate::window::{CloseWindow, MinimizeWindow, ZoomWindow};
+use crate::file_explorer::ToggleFileExplorer;
 
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(no_json)]
@@ -116,6 +117,21 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                 .flex()
                 .flex_row()
                 .items_center()
+                .child({
+                    let action = ToggleFileExplorer.boxed_clone();
+                    div()
+                        .id("file-explorer-btn")
+                        .px(px(6.0))
+                        .py(px(3.0))
+                        .text_color(theme.foreground)
+                        .rounded(px(3.0))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.selection))
+                        .child("\u{1F4C1}")
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        })
+                })
                 .gap(rems(0.5))
                 .child({
                     let action = ToggleRecentFiles.boxed_clone();
