@@ -18,7 +18,7 @@ pub const FILE_WATCHER_POLL_MS: u64 = 100;
 /// Default window width in pixels.
 pub const DEFAULT_WIN_WIDTH: f32 = 900.0;
 
-pub const DEFAULT_WIN_HEIGHT: f32 = 900.0;
+pub const DEFAULT_WIN_HEIGHT: f32 = 800.0;
 
 #[cfg(target_os = "windows")]
 const DEFAULT_TEXT_FONT: &str = "Segoe UI";
