@@ -1,5 +1,6 @@
 use gpui::*;
 use std::ops::Range;
+use std::time::Instant;
 use crate::cursor::Selection;
 
 pub fn content_from_file(path: &str) -> String {
@@ -23,23 +24,33 @@ impl EntityInputHandler for Editor {
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        if let Some(ref mark) = self.ime_marked_range {
-            let rope = self.state.buffer.rope();
-            let to_utf16 = |byte_offset: usize| -> usize {
-                let byte_offset = byte_offset.min(rope.len_bytes());
-                let char_idx = rope.byte_to_char(byte_offset);
-                let mut utf16: usize = 0;
-                for ci in 0..char_idx {
-                    utf16 += rope.char(ci).len_utf16();
+        let mark = if let Some(ref mark) = self.ime_marked_range {
+            mark.clone()
+        } else if self.ime_composing.get() {
+            if let Some(last) = self.last_ime_activity.get() {
+                if last.elapsed().as_millis() >= 50 {
+                    self.ime_composing.set(false);
+                    self.last_ime_activity.set(None);
+                    return None;
                 }
-                utf16
-            };
-            let s = mark.start;
-            let e = mark.end.min(rope.len_bytes());
-            Some(to_utf16(s)..to_utf16(e))
+            }
+            self.state.cursor().offset..self.state.cursor().offset
         } else {
-            None
-        }
+            return None;
+        };
+        let rope = self.state.buffer.rope();
+        let to_utf16 = |byte_offset: usize| -> usize {
+            let byte_offset = byte_offset.min(rope.len_bytes());
+            let char_idx = rope.byte_to_char(byte_offset);
+            let mut utf16: usize = 0;
+            for ci in 0..char_idx {
+                utf16 += rope.char(ci).len_utf16();
+            }
+            utf16
+        };
+        let s = mark.start;
+        let e = mark.end.min(rope.len_bytes());
+        Some(to_utf16(s)..to_utf16(e))
     }
 
     fn text_for_range(&mut self, r: Range<usize>, _: &mut Option<Range<usize>>, _: &mut Window, _: &mut Context<Self>) -> Option<String> {
@@ -100,12 +111,13 @@ impl EntityInputHandler for Editor {
 
         // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
-            // IME cancellation: empty text means composition was aborted
             if text.is_empty() {
                 if let Some(mark) = self.ime_marked_range.take() {
                     self.state.buffer.delete(mark.clone(), mark.end);
                     self.state.selection = Selection::new(mark.start, mark.start);
                 }
+                self.ime_composing.set(true);
+                self.last_ime_activity.set(Some(Instant::now()));
                 cx.notify();
                 return;
             }
@@ -113,6 +125,8 @@ impl EntityInputHandler for Editor {
             let mark = self.ime_marked_range.take().unwrap();
             let new_end = self.state.buffer.replace(mark.clone(), text, mark.start);
             self.state.selection = Selection::new(new_end, new_end);
+            self.ime_composing.set(true);
+            self.last_ime_activity.set(Some(Instant::now()));
             self.sync_list_state(w, cx);
             cx.notify();
             return;
@@ -235,12 +249,15 @@ impl EntityInputHandler for Editor {
         }
 
         let new_len = new.len();
-        // IME cancellation: empty composition string means IME was aborted
+        // IME cancellation: empty composition string. Keep ime_composing
+        // to suppress the backspace key that triggered this clear.
         if new_len == 0 {
             if let Some(mark) = self.ime_marked_range.take() {
                 self.state.buffer.delete(mark.clone(), mark.end);
                 self.state.selection = Selection::new(mark.start, mark.start);
             }
+            self.ime_composing.set(true);
+            self.last_ime_activity.set(Some(Instant::now()));
             cx.notify();
             return;
         }

@@ -1,4 +1,4 @@
-﻿mod action;
+mod action;
 mod config;
 pub mod ime;
 pub mod theme;
@@ -66,6 +66,9 @@ pub struct Editor {
     list_state: ListState,
     /// IME composition text range in byte offsets (None when not composing)
     pub(crate) ime_marked_range: Option<Range<usize>>,
+    /// True while IME commit key suppression window is active (50ms).
+    pub(crate) ime_composing: std::cell::Cell<bool>,
+    pub(crate) last_ime_activity: std::cell::Cell<Option<std::time::Instant>>,
     scroll_to_cursor_pending: bool,
     /// Last known cursor line, used to detect cursor movement for auto-scroll.
     last_cursor_line: Option<usize>,
@@ -164,6 +167,8 @@ impl Editor {
             ime_marked_range: None,
             last_synced_version: 0,
             last_drag_scroll: None,
+            ime_composing: std::cell::Cell::new(false),
+            last_ime_activity: std::cell::Cell::new(None),
             in_drag_scroll_zone: false,
             is_selecting: false,
             scrollbar_drag_start_y: None,
