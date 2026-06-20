@@ -291,46 +291,42 @@ fn byte_to_char_safe(&self, byte_offset: usize) -> usize {
 - **修复**：删除 ASCII 守卫块（`ime.rs:56-59`）
 - **原理**：守卫原为防止 WM_KEYDOWN+WM_CHAR 双路径重复插入，但 `on_key_down` 已不插入可打印字符（0.4.4 最终方案），守卫已无必要且阻塞 IME 提交流程
 
-### 2026-06-20（0.4.8：Rime 输入法全适配）
+### 2026-06-20（Rime 输入法适配）
 
-Rime（小狼毫/weasel 0.17.4）在 Windows 上使用 TSF 框架，与 GPUI 0.2.2 的 IMM32 IME 处理存在根本性事件时序差异，导致四个独立 bug。以下逐一描述根因与修复。
+Rime（小狼毫/weasel 0.17.4）的 `ImeProcessKey` 在提交/清空 composition 时同步发送 `WM_IME_COMPOSITION`，消息入队后键事件紧随其后。GPUI 处理时 **IME 回调先于键事件** 到达——`replace_text_in_range` 清空了 `ime_marked_range`，随后键事件到达时 `marked_text_range()` 返回 `None`，被派发到 `on_key_down`。
 
-**核心发现：Rime 的 WM_IME_COMPOSITION 比 WM_KEYDOWN 先到达**
+#### 三个受影响场景
 
-Rime 在 `ImeProcessKey` 中同步提交文本（`_EndComposition` → `WM_IME_COMPOSITION`），然后返回 `TRUE` 或 `FALSE`。无论返回值如何，`WM_IME_COMPOSITION` 消息已经进入了队列。当 GPUI 处理消息时，IME composition 事件先于键事件到达。这要求 editor 的 IME 状态管理必须在**确认路径中保持 `ime_composing` 标志**，以便随后的键事件被 GPUI 的 `marked_text_range()` 检查拦截。
+| 场景 | 现象 | 根因 |
+|------|------|------|
+| 空格上屏 | 字符后多空格 | 确认分支清空 `ime_marked_range`，空格键随后到达穿透 `on_key_down` |
+| Enter 上屏英文 | 英文换行 | 同上——Enter 键穿透 `on_key_down` 执行 `self.enter()` |
+| 候选窗删最后一字 | 编辑区字符被删 | 空字符串清空 `ime_marked_range`，退格键随后到达穿透 `on_key_down` |
 
-#### Bug 1：空格上屏首选后多插入空格
+#### 修复方案
 
-- **现象**：Rime 用空格选首选上屏后，上屏字符后面多一个空格
-- **根因**：`replace_text_in_range` 的 IME 确认分支在替换完 composition 文本后立即清除了 `ime_composing` 标志。随后的空格键事件到达时，`marked_text_range()` 返回 `None`，GPUI 将空格派发到 `on_key_down`，导致 `try_insert_space()` 插入空格
-- **修复**：确认分支不清除 `ime_composing`，同时刷新 `last_ime_activity` 时间戳。`marked_text_range()` 返回合成零宽范围，GPUI 将键事件路由到 `translate_message`（IME 处理）而非 `on_key_down`。`ime_composing` 由 500ms 超时自动清除
+新增 `ime_composing: Cell<bool>` 和 `last_ime_activity: Cell<Option<Instant>>`。在确认路径和两个空字符串路径中设置 `ime_composing = true` 并刷新时间戳。`marked_text_range()` 在 `ime_marked_range == None && ime_composing == true` 时返回光标处零宽合成范围，GPUI 将键事件路由到 `translate_message`（IME 处理）而非 `on_key_down`。50ms 超时自动清除。
 
-#### Bug 2：Enter 上屏英文后换行
+```rust
+// marked_text_range 新增分支
+} else if self.ime_composing.get() {
+    if let Some(last) = self.last_ime_activity.get() {
+        if last.elapsed().as_millis() >= 50 {
+            self.ime_composing.set(false);
+            return None;
+        }
+    }
+    self.state.cursor().offset..self.state.cursor().offset  // 合成零宽范围
+}
+```
 
-- **现象**：Rime 英文模式按 Enter 上屏后，英文出现在新一行
-- **根因**：与 Bug 1 完全相同的机制——Enter 键事件在 IME 确认后到达，被派发到 `on_key_down` 执行 `self.enter()` 插入换行
-- **修复**：同 Bug 1
+**为什么 50ms 不影响其他输入法**：微软拼音/微信/手心的 commit 键被 IME 完全消费（`ImeProcessKey` 返回 `TRUE`），不产生 `WM_KEYDOWN`。50ms 窗口内没有待处理键事件，合成范围对它们透明。
 
-#### Bug 3：候选窗内删除键导致编辑区误删 / 光标锁死
+#### 尝试过的弯路
 
-- **现象**：在 Rime 候选窗激活时按 Backspace/Delete 删除拼音，最后一个拼音删除后光标前编辑区字符也被删除；删完所有候选窗字符后光标锁死无法输入
-- **根因**：(a) 最后一个退格清空 composition 字符串时，`replace_and_mark_text_in_range` 收到空字符串并清除了 `ime_composing`，导致随后的退格键事件穿透到 `on_key_down`；(b) 超时时间 5 秒过长，用户删完候选窗字符后长时间无法恢复
-- **修复**：(a) 空字符串路径不清除 `ime_composing`，保持键事件抑制；(b) 超时从 5 秒缩短到 500ms
+- **全局 `on_key_down` 拦截退格/空格**：标志残留影响其他输入法的正常退格和空格
+- **动态超时（500ms/3s）**：过长导致按键劫持，过短不够覆盖 Rime 延迟
+- **Windows IME API 检测**：`ImmGetOpenStatus` 在清空 composition 后仍返回 true，无法区分
+- **`last_commit_key` 回吞机制**：对 Rime 无效（文本先到、键后到的时序）
 
-#### Bug 4：中文标点触发回删
-
-- **现象**：Enter 上屏英文后，输入 `，；：？"` 等全角标点导致之前上屏的英文字符被删除
-- **根因**：`replace_text_in_range` 的向后扫描 ASCII 拼音字母逻辑**没有 `is_ime_output` 保护**。全角标点（U+FF0C 等）不在 CJK 范围（`is_ime_output=false`），但扫描仍执行，找到光标前刚上屏的英文字母，将其当作"拼音"替换为标点
-- **修复**：将整个向后扫描 + 替换逻辑收进 `if is_ime_output` 块内。非 CJK 文本走 `PLAIN_INSERT`，不碰已有内容
-
-#### 关键架构改进
-
-| 机制 | 说明 |
-|------|------|
-| `ime_composing: Cell<bool>` | 独立于 `ime_marked_range` 的 IME 组合状态标志。为不维护 marked_range 的 IME（Rime/手心）提供组合检测，通过 `marked_text_range()` 返回合成零宽范围来抑制键事件 |
-| `last_ime_activity: Cell<Option<Instant>>` | 500ms 无活动自动清除 `ime_composing`，防止光标锁死 |
-| `last_commit_key: Cell<Option<u8>>` | 追踪 `on_key_down` 中的空格/回车键，在 `replace_text_in_range` 收到提交文本时反向回吞（处理键先到、文本后到的时序）|
-| `ime_just_committed_text: Cell<bool>` | CJK 文本提交后设置，`on_key_down` 检查并抑制随后的空格/回车（处理文本先到、键后到的时序）|
-| 向后扫描 `is_ime_output` 守卫 | 拼音字母扫描仅在 `is_ime_output=true` 时执行，防止非 CJK 标点误触发 |
-
-**关键教训**：IME 提交路径（`replace_text_in_range` 确认分支）是状态转换的关键节点。清除 `ime_composing` 必须在键事件**之后**——通过超时或显式 `unmark_text`——而非在确认分支中同步清除。
+**最终正确方案的核心**：不改变 `on_key_down`，只在 `marked_text_range` 返回合成范围——精确利用 GPUI 已有的 `is_composing` 检查机制，不引入全局状态。
