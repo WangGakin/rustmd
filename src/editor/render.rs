@@ -98,6 +98,8 @@ impl Render for Editor {
                 total_lines,
                 first_visible_line,
                 last_visible_line,
+                char_count: self.state.buffer.len_chars(),
+                word_count: self.state.buffer.word_count(),
             };
         }
 

@@ -461,6 +461,24 @@ impl BufferContent {
         self.text.len_chars()
     }
 
+    /// Count words by splitting on whitespace. Efficiently iterates rope chunks
+    /// without allocating the full string.
+    pub fn word_count(&self) -> usize {
+        let mut count = 0;
+        let mut in_word = false;
+        for chunk in self.text.chunks() {
+            for &b in chunk.as_bytes() {
+                if b.is_ascii_whitespace() {
+                    in_word = false;
+                } else if !in_word {
+                    in_word = true;
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
     pub fn is_empty(&self) -> bool {
         self.text.len_bytes() == 0
     }

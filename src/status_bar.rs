@@ -21,6 +21,10 @@ pub struct StatusBarInfo {
     pub first_visible_line: usize,
     /// Last visible line (0-indexed), for scroll percentage
     pub last_visible_line: usize,
+    /// Total character count
+    pub char_count: usize,
+    /// Total word count (whitespace-delimited)
+    pub word_count: usize,
 }
 
 /// Render the status bar at the bottom of the editor.
@@ -42,6 +46,7 @@ pub fn status_bar(info: &StatusBarInfo, theme: &EditorTheme, config: &Config) ->
 
     // Position: Ln 42, Col 15
     let position_str = format!("Ln {}, Col {}", info.cursor_line, info.cursor_col);
+    let (kao_face, kao_mood) = pick_kaomoji(info.char_count);
 
     // Color palette for nesting depth (cycles when exhausted)
     let depth_colors = [
@@ -103,7 +108,7 @@ pub fn status_bar(info: &StatusBarInfo, theme: &EditorTheme, config: &Config) ->
                         .children(marker_elements),
                 )
                 .child(
-                    // Right: heading, position, lines, scroll
+                    // Right: heading, position, lines, scroll, counts, kaomoji
                     div()
                         .flex_shrink_0()
                         .whitespace_nowrap()
@@ -117,12 +122,30 @@ pub fn status_bar(info: &StatusBarInfo, theme: &EditorTheme, config: &Config) ->
                                 .child(format!("H{}", level))
                         }))
                         .child(position_str)
-                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("·"))
+                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("\u{b7}"))
                         .child(format!("{} lines", info.total_lines))
-                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("·"))
-                        .child(div().text_color(theme.purple).child(scroll_str)),
+                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("\u{b7}"))
+                        .child(div().text_color(theme.purple).child(scroll_str))
+                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("\u{b7}"))
+                        .child(format!("{} words", info.word_count))
+                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("\u{b7}"))
+                        .child(format!("{} chars", info.char_count))
+                        .child(div().mx(rems(0.5)).text_color(theme.selection).child("\u{b7}"))
+                        .child(div().text_color(theme.orange).child(format!("{} {}", kao_face, kao_mood))),
                 ),
         )
+}
+/// Pick a kaomoji face based on document character count.
+fn pick_kaomoji(char_count: usize) -> (&'static str, &'static str) {
+    match char_count {
+        0          => ("(\u{b4}\u{30fb}\u{3c9}\u{30fb}\u{b4})",       "\u{7a7a}\u{767d}\u{753b}\u{5e03}"),
+        c if c < 200 => ("(\u{273f}\u{25d5}\u{203f}\u{25d5})",        "\u{8ff7}\u{4f60}\u{6587}\u{6863}"),
+        c if c < 800 => ("(\u{ff61}\u{30fb}\u{3c9}\u{30fb}\u{ff61})", "\u{6210}\u{957f}\u{4e2d}"),
+        c if c < 2500 => ("(\u{ffe3}\u{25bd}\u{ffe3})",              "\u{6b65}\u{5165}\u{6b63}\u{8f68}"),
+        c if c < 8000 => ("(\u{2022}\u{3000}\u{1d17}\u{3000}\u{2022})\u{648}", "\u{594b}\u{7b14}\u{75be}\u{4e66}"),
+        c if c < 25000 => ("(\u{2609}_\u{2609})",                    "\u{5e9e}\u{7136}\u{5927}\u{7269}"),
+        _               => ("(\u{ff1b}\u{ff8a}\u{ff64}\u{ff8a}\u{ff89})", "\u{53f2}\u{8bd7}\u{5de8}\u{8457}"),
+    }
 }
 
 /// Build the display string for context markers, handling nested checkbox compaction.
