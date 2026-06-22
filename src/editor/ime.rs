@@ -109,6 +109,8 @@ impl EntityInputHandler for Editor {
             return;
         }
 
+        // Reset column memory since text is being inserted/deleted
+        self.preferred_column = None;
         // ── IME composition active ──
         if self.ime_marked_range.is_some() && replacement.is_none() {
             if text.is_empty() {
@@ -247,6 +249,8 @@ impl EntityInputHandler for Editor {
             cx.notify();
             return;
         }
+        // Reset column memory since text is being inserted/deleted
+        self.preferred_column = None;
 
         let new_len = new.len();
         // IME cancellation: empty composition string. Keep ime_composing

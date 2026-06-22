@@ -1,4 +1,0 @@
-panic: panicked at C:\Users\Benai\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\gpui-0.2.2\src\elements\text.rs:239:40:
-invalid text run
-backtrace:
-disabled backtrace

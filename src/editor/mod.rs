@@ -134,6 +134,10 @@ pub struct Editor {
     cached_scrollbar: Option<(u64, usize, f32, f32)>,
     /// Cached visible line range: (buffer_version, scroll_top_item_ix, first_visible, last_visible).
     cached_visible_range: Option<(u64, usize, usize, usize)>,
+    /// Preferred visual X position for vertical cursor movement (column memory).
+    /// Set on the first vertical move after a reset, preserved across short/blank lines.
+    /// Reset by horizontal movements, mouse clicks, and text edits.
+    preferred_column: Option<Pixels>,
 }
 
 impl Editor {
@@ -190,6 +194,7 @@ impl Editor {
             cached_nested_context: None,
             cached_scrollbar: None,
             cached_visible_range: None,
+            preferred_column: None,
         }
     }
 
@@ -416,19 +421,23 @@ impl Editor {
     }
 
     fn tab(&mut self) {
+        self.preferred_column = None;
         self.state.tab();
     }
 
     fn shift_tab(&mut self) {
+        self.preferred_column = None;
         self.state.shift_tab();
     }
 
     fn toggle_checkbox(&mut self, line_number: usize, cx: &mut Context<Self>) {
+        self.preferred_column = None;
         self.state.toggle_checkbox_state(line_number);
         cx.notify();
     }
 
     fn insert_text(&mut self, text: &str) {
+        self.preferred_column = None;
         self.state.insert_text(text);
     }
 
@@ -593,14 +602,17 @@ impl Editor {
     }
 
     fn delete_backward(&mut self) {
+        self.preferred_column = None;
         self.state.delete_backward();
     }
 
     fn delete_forward(&mut self) {
+        self.preferred_column = None;
         self.state.delete_forward();
     }
 
     fn delete_to_line_end(&mut self) {
+        self.preferred_column = None;
         let cursor_pos = self.cursor().offset;
         let line_end = self.cursor().move_to_line_end(&self.state.buffer).offset;
         if cursor_pos < line_end {
@@ -609,16 +621,19 @@ impl Editor {
     }
 
     fn enter(&mut self) {
+        self.preferred_column = None;
         self.state.enter();
         self.scroll_to_cursor_pending = true;
     }
 
     fn shift_enter(&mut self) {
+        self.preferred_column = None;
         self.state.shift_enter();
         self.scroll_to_cursor_pending = true;
     }
 
     fn shift_alt_enter(&mut self) {
+        self.preferred_column = None;
         self.state.shift_alt_enter();
         self.scroll_to_cursor_pending = true;
     }
@@ -699,6 +714,9 @@ impl Editor {
         } else {
             px(0.0)
         };
+        // Column memory: remember the preferred visual x across short/blank lines
+        let target_x = self.preferred_column.unwrap_or(relative_x);
+        self.preferred_column = Some(target_x);
 
         let line_text = shared; // reuse for length
         let line_len = line_text.len();
@@ -726,7 +744,7 @@ impl Editor {
                 } else {
                     line_len
                 };
-                let idx = offset_at_x(&shaped, row_start, row_end, relative_x);
+                let idx = offset_at_x(&shaped, row_start, row_end, target_x);
                 Some(Cursor {
                     offset: line_range.start + idx,
                 })
@@ -738,11 +756,9 @@ impl Editor {
                 } else {
                     self.visual_cross_line(
                         target_line,
-                        relative_x,
-                        available_width,
+                        target_x,
                         &line_font,
                         font_size,
-                        /* from_end = */ false,
                         window,
                     )
                 }
@@ -754,7 +770,7 @@ impl Editor {
                 wrap_offsets[visual_row - 2]
             };
             let row_end = wrap_offsets[visual_row - 1];
-            let idx = offset_at_x(&shaped, prev_row_start, row_end, relative_x);
+            let idx = offset_at_x(&shaped, prev_row_start, row_end, target_x);
             Some(Cursor {
                 offset: line_range.start + idx,
             })
@@ -766,11 +782,9 @@ impl Editor {
                 let target_line = current_line_idx - 1;
                 self.visual_cross_line(
                     target_line,
-                    relative_x,
-                    available_width,
+                    target_x,
                     &line_font,
                     font_size,
-                    /* from_end = */ true,
                     window,
                 )
             }
@@ -787,15 +801,12 @@ impl Editor {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn visual_cross_line(
         &mut self,
         target_line_idx: usize,
         visual_x: Pixels,
-        available_width: Pixels,
         font: &Font,
         font_size: Pixels,
-        from_end: bool,
         window: &mut Window,
     ) -> Option<Cursor> {
         let target_range = self.state.buffer.line_byte_range(target_line_idx);
@@ -809,14 +820,6 @@ impl Editor {
                 offset: target_range.start,
             });
         }
-
-        let wrap_offsets = Self::compute_wrap_offsets(
-            &target_text,
-            available_width,
-            font,
-            font_size,
-            window,
-        );
 
         let run = TextRun {
             len: target_text.len(),
@@ -832,30 +835,14 @@ impl Editor {
             .shape_line(shared.clone(), font_size, &[run], None);
 
         let line_len = shared.len();
-        if from_end && !wrap_offsets.is_empty() {
-            // Enter the LAST visual row
-            let last_row_start = wrap_offsets.last().copied().unwrap_or(0);
-            let target_x = shaped.x_for_index(last_row_start) + visual_x;
-            let idx = shaped
-                .index_for_x(target_x)
-                .unwrap_or(line_len)
-                .min(line_len)
-                .max(last_row_start);
-            Some(Cursor {
-                offset: target_range.start + idx,
-            })
-        } else {
-            // Enter the FIRST visual row (or the only row if no wrapping)
-            let row_end = wrap_offsets.first().copied().unwrap_or(line_len);
-            let target_x = shaped.x_for_index(0) + visual_x;
-            let idx = shaped
-                .index_for_x(target_x)
-                .unwrap_or(0)
-                .min(row_end);
-            Some(Cursor {
-                offset: target_range.start + idx,
-            })
-        }
+        let target_x = shaped.x_for_index(0) + visual_x;
+        let idx = shaped
+            .index_for_x(target_x)
+            .unwrap_or(line_len)
+            .min(line_len);
+        Some(Cursor {
+            offset: target_range.start + idx,
+        })
     }
 
     fn compute_wrap_offsets(
@@ -1016,11 +1003,13 @@ impl Editor {
                     return;
                 }
                 "b" => {
+                    self.preferred_column = None;
                     self.move_in_direction(Direction::Left, extend);
                     cx.notify();
                     return;
                 }
                 "f" => {
+                    self.preferred_column = None;
                     self.move_in_direction(Direction::Right, extend);
                     cx.notify();
                     return;
@@ -1062,9 +1051,11 @@ impl Editor {
                 self.delete_forward();
             }
             "left" => {
+                self.preferred_column = None;
                 self.move_in_direction(Direction::Left, extend);
             }
             "right" => {
+                self.preferred_column = None;
                 self.move_in_direction(Direction::Right, extend);
             }
             "up" => {
@@ -1074,6 +1065,7 @@ impl Editor {
                 self.move_in_direction_visual(Direction::Down, extend, window);
             }
             "home" => {
+                self.preferred_column = None;
                 let new_cursor = if keystroke.modifiers.control || keystroke.modifiers.platform {
                     self.cursor().move_to_start()
                 } else {
@@ -1083,6 +1075,7 @@ impl Editor {
                 self.scroll_to_cursor_pending = true;
             }
             "end" => {
+                self.preferred_column = None;
                 let new_cursor = if keystroke.modifiers.control || keystroke.modifiers.platform {
                     self.cursor().move_to_end(&self.state.buffer)
                 } else {
@@ -1101,6 +1094,7 @@ impl Editor {
                 }
             }
             "space" => {
+                self.preferred_column = None;
                 if !self.state.try_insert_space() {
                     return;
                 }
@@ -1117,6 +1111,7 @@ impl Editor {
             "a" if (keystroke.modifiers.control || keystroke.modifiers.platform)
                 && (!is_mac_mode || is_ctrl_shift) =>
             {
+                self.preferred_column = None;
                 self.state.selection = Selection::select_all(&self.state.buffer);
             }
             "c" if keystroke.modifiers.control || keystroke.modifiers.platform => {
@@ -1145,6 +1140,7 @@ impl Editor {
                 }
             }
             "z" if keystroke.modifiers.control || keystroke.modifiers.platform => {
+                self.preferred_column = None;
                 if keystroke.modifiers.shift {
                     if let Some(cursor_pos) = self.state.buffer.redo() {
                         self.state.selection = Selection::new(cursor_pos, cursor_pos);
@@ -1154,6 +1150,7 @@ impl Editor {
                 }
             }
             "y" if keystroke.modifiers.control => {
+                self.preferred_column = None;
                 if let Some(cursor_pos) = self.state.buffer.redo() {
                     self.state.selection = Selection::new(cursor_pos, cursor_pos);
                 }
@@ -1377,6 +1374,7 @@ impl Editor {
                 self.delete_backward();
             }
             EditorAction::Move(direction) => {
+                self.preferred_column = None;
                 self.move_in_direction(direction.clone(), false);
             }
             EditorAction::Click {
@@ -1384,9 +1382,11 @@ impl Editor {
                 shift,
                 click_count,
             } => {
+                self.preferred_column = None;
                 self.state.handle_click(*offset, *shift, *click_count);
             }
             EditorAction::Drag { offset } => {
+                self.preferred_column = None;
                 if !self.in_drag_scroll_zone {
                     self.state.handle_drag(*offset);
                     self.is_selecting = true;
