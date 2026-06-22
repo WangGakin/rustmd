@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 
@@ -18,6 +18,7 @@ use rustmd::menu::{ToggleAbout, ToggleKeyMode};
 use rustmd::tooltip::Tooltip;
 use rustmd::user_config;
 use rustmd::window::{window_shadow, CloseWindow, MinimizeWindow, NewWindow, ZoomWindow};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{ShowWindowAsync, SW_RESTORE};
 
 fn main() {
@@ -288,6 +289,7 @@ impl Render for RootView {
                         window.minimize_window();
                     })
                     .on_action(|_: &ZoomWindow, window, _cx| {
+                        #[cfg(windows)]
                         if window.is_maximized() {
                             if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window)
                                 && let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
@@ -299,6 +301,8 @@ impl Render for RootView {
                         } else {
                             window.zoom_window();
                         }
+                        #[cfg(not(windows))]
+                        window.zoom_window();
                     })
                     .on_action(cx.listener(
                         |this: &mut RootView, _: &CloseWindow, window, cx| {

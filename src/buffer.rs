@@ -461,18 +461,31 @@ impl BufferContent {
         self.text.len_chars()
     }
 
-    /// Count words by splitting on whitespace. Efficiently iterates rope chunks
-    /// without allocating the full string.
+    /// Count words. Whitespace-delimited for Latin text; each CJK/Hangul/Kana
+    /// character counts as its own word, matching common editor conventions.
     pub fn word_count(&self) -> usize {
         let mut count = 0;
         let mut in_word = false;
         for chunk in self.text.chunks() {
-            for &b in chunk.as_bytes() {
-                if b.is_ascii_whitespace() {
+            for ch in chunk.chars() {
+                if ch.is_whitespace() {
                     in_word = false;
-                } else if !in_word {
-                    in_word = true;
+                } else if is_cjk(ch) {
+                    // Each CJK/Hangul/Kana character is its own word
                     count += 1;
+                    in_word = false;
+                } else if ch.is_alphanumeric() {
+                    // Latin/alphanumeric word character (grouped by whitespace)
+                    if !in_word {
+                        in_word = true;
+                        count += 1;
+                    }
+                } else if ch == '\'' || ch == '-' || ch == '_' {
+                    // Intra-word punctuation: keep existing word going,
+                    // but don't start a new word on its own
+                } else {
+                    // Other punctuation/symbols: end existing word
+                    in_word = false;
                 }
             }
         }
@@ -810,6 +823,34 @@ impl BufferContent {
 
         self.code_highlight_cache.valid = true;
     }
+}
+
+/// Check if a character is CJK (Chinese/Japanese/Korean), Hangul, or Kana.
+/// Each such character is counted as its own word for word-count purposes.
+fn is_cjk(ch: char) -> bool {
+    matches!(ch as u32,
+        // Hiragana, Katakana
+        0x3040..=0x309F | 0x30A0..=0x30FF |
+        // CJK Radicals, Kangxi, Description
+        0x2E80..=0x2EFF | 0x2F00..=0x2FDF | 0x2FF0..=0x2FFF |
+        // Bopomofo, Hangul Compatibility Jamo, Kanbun, CJK Strokes
+        0x3100..=0x312F | 0x3130..=0x318F | 0x3190..=0x31FF |
+        // Enclosed/Compatibility CJK
+        0x3200..=0x32FF | 0x3300..=0x33FF |
+        // CJK Extension A, Unified Ideographs
+        0x3400..=0x4DBF | 0x4E00..=0x9FFF |
+        // Yi, Hangul Syllables
+        0xA000..=0xA4CF | 0xAC00..=0xD7AF |
+        // CJK Compatibility Ideographs, Compatibility Forms, Fullwidth forms
+        0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF |
+        // Kana Supplement, Extended-A
+        0x1B000..=0x1B0FF | 0x1B100..=0x1B12F |
+        // CJK Extension B–H
+        0x20000..=0x2A6DF | 0x2A700..=0x2B73F |
+        0x2B740..=0x2B81F | 0x2B820..=0x2CEAF |
+        0x2CEB0..=0x2EBEF | 0x2F800..=0x2FA1F |
+        0x30000..=0x3134F | 0x31350..=0x323AF
+    )
 }
 
 impl Default for BufferContent {
@@ -1165,6 +1206,36 @@ mod tests {
     fn test_unordered_list_unchanged() {
         let buf: Buffer = "- First\n- Second\n- Third\n".parse().unwrap();
         assert_eq!(buf.text(), "- First\n- Second\n- Third\n");
+    }
+
+    #[test]
+    fn test_word_count_ascii() {
+        let buf: Buffer = "hello world rustmd".parse().unwrap();
+        assert_eq!(buf.word_count(), 3);
+    }
+
+    #[test]
+    fn test_word_count_cjk() {
+        let buf: Buffer = "你好世界".parse().unwrap();
+        assert_eq!(buf.word_count(), 4);
+    }
+
+    #[test]
+    fn test_word_count_mixed() {
+        let buf: Buffer = "hello你好world".parse().unwrap();
+        assert_eq!(buf.word_count(), 4);
+    }
+
+    #[test]
+    fn test_word_count_intra_word_punct() {
+        let buf: Buffer = "don't word-count test_case".parse().unwrap();
+        assert_eq!(buf.word_count(), 3);
+    }
+
+    #[test]
+    fn test_word_count_all_whitespace() {
+        let buf: Buffer = "   \n\t  ".parse().unwrap();
+        assert_eq!(buf.word_count(), 0);
     }
 
     // Line extraction tests (moved from lines.rs)

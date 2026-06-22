@@ -35,13 +35,15 @@ open = "5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rfd = "0.15"
-windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse"] }
 raw-window-handle = "0.6"
 dirs = "5"
 log = "0.4"
 env_logger = "0.11"
 
-[build-dependencies]
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_UI_WindowsAndMessaging", "Win32_Foundation", "Win32_UI_Input_KeyboardAndMouse"] }
+
+[target.'cfg(windows)'.build-dependencies]
 embed-resource = "2"
 
 [features]

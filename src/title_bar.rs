@@ -1,7 +1,10 @@
 use gpui::{Action, App, ElementId, Fill, MouseButton, div, prelude::*, px, rems};
 use raw_window_handle::RawWindowHandle;
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, HTCAPTION, WM_NCLBUTTONDOWN};
 
 use crate::editor::EditorTheme;
@@ -82,6 +85,7 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                         .min_w_0()
                         .relative()
                         .on_mouse_down(MouseButton::Left, |_e, window, _cx| {
+                            #[cfg(windows)]
                             if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window)
                                 && let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
                                     unsafe {
