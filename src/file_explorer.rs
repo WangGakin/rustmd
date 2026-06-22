@@ -12,7 +12,11 @@ pub const PAGE_SIZE: usize = 18;
 
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(no_json)]
-pub struct OpenExplorerFile(pub PathBuf);
+pub struct OpenExplorerFile {
+    pub path: PathBuf,
+    /// Whether Shift was held during click — opens in same window instead of new.
+    pub shift: bool,
+}
 
 #[derive(Clone, PartialEq, Debug, Action)]
 #[action(no_json)]
@@ -134,7 +138,7 @@ pub fn file_explorer_panel(
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| path.display().to_string());
-            let action = OpenExplorerFile(path.clone()).boxed_clone();
+            let path_for_click = path.clone();
             div()
                 .px(rems(0.75))
                 .py(rems(0.3))
@@ -153,8 +157,14 @@ pub fn file_explorer_panel(
                     }
                 })
                 .child(name)
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
+                .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, window, cx| {
+                    window.dispatch_action(
+                        Box::new(OpenExplorerFile {
+                            path: path_for_click.clone(),
+                            shift: event.modifiers.shift,
+                        }),
+                        cx,
+                    );
                 })
                 .into_any_element()
         }))

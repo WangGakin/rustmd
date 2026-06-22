@@ -485,61 +485,69 @@ impl Render for RootView {
                     ))
                     .on_action(cx.listener(
                         |this: &mut RootView, action: &OpenExplorerFile, window, cx| {
-                            let path = action.0.clone();
-                            let weak = this.editor.downgrade();
-                            let is_dirty = this.editor.read(cx).is_dirty();
-                            let win_handle = window.window_handle();
-                            cx.spawn(async move |_tx, cx| {
-                                let (should_open, needs_save) = if is_dirty {
-                                    match rustmd::file_ops::confirm_discard() {
-                                        rustmd::file_ops::DiscardChoice::Save => (true, true),
-                                        rustmd::file_ops::DiscardChoice::Cancel => (false, false),
-                                        rustmd::file_ops::DiscardChoice::DontSave => (true, false),
+                            let path = action.path.clone();
+                            if action.shift {
+                                // Shift+click → open in same window (replace)
+                                let weak = this.editor.downgrade();
+                                let is_dirty = this.editor.read(cx).is_dirty();
+                                let win_handle = window.window_handle();
+                                cx.spawn(async move |_tx, cx| {
+                                    let (should_open, needs_save) = if is_dirty {
+                                        match rustmd::file_ops::confirm_discard() {
+                                            rustmd::file_ops::DiscardChoice::Save => (true, true),
+                                            rustmd::file_ops::DiscardChoice::Cancel => (false, false),
+                                            rustmd::file_ops::DiscardChoice::DontSave => (true, false),
+                                        }
+                                    } else {
+                                        (true, false)
+                                    };
+
+                                    if !should_open {
+                                        return;
                                     }
-                                } else {
-                                    (true, false)
-                                };
 
-                                if !should_open {
-                                    return;
-                                }
+                                    if needs_save {
+                                        let _ = cx.update(|cx| {
+                                            if let Some(editor) = weak.upgrade() {
+                                                editor.update(cx, |editor, cx| {
+                                                    editor.save(cx);
+                                                    editor.is_dirty()
+                                                })
+                                            } else {
+                                                false
+                                            }
+                                        });
+                                        let still_dirty: bool = cx.update(|cx| {
+                                            if let Some(e) = weak.upgrade() {
+                                                e.read(cx).is_dirty()
+                                            } else {
+                                                true
+                                            }
+                                        }).ok().unwrap_or(true);
+                                        if still_dirty {
+                                            return;
+                                        }
+                                    }
 
-                                if needs_save {
                                     let _ = cx.update(|cx| {
                                         if let Some(editor) = weak.upgrade() {
                                             editor.update(cx, |editor, cx| {
-                                                editor.save(cx);
-                                                editor.is_dirty()
+                                                editor.open_file_at(path, cx);
                                             })
-                                        } else {
-                                            false
                                         }
                                     });
-                                    let still_dirty: bool = cx.update(|cx| {
-                                        if let Some(e) = weak.upgrade() {
-                                            e.read(cx).is_dirty()
-                                        } else {
-                                            true
-                                        }
-                                    }).ok().unwrap_or(true);
-                                    if still_dirty {
-                                        return;
-                                    }
-                                }
-
-                                let _ = cx.update(|cx| {
-                                    if let Some(editor) = weak.upgrade() {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.open_file_at(path, cx);
-                                        })
-                                    }
-                                });
-                                let _ = cx.update_window(win_handle, |_, window, cx| {
-                                    window.refresh();
-                                    window.dispatch_action(ToggleFileExplorer.boxed_clone(), cx);
-                                });
-                            })
-                            .detach();
+                                    let _ = cx.update_window(win_handle, |_, window, cx| {
+                                        window.refresh();
+                                        window.dispatch_action(ToggleFileExplorer.boxed_clone(), cx);
+                                    });
+                                })
+                                .detach();
+                            } else {
+                                // Plain click → open in new window
+                                open_new_window_with_file(path, cx);
+                                // Close the explorer in the current window
+                                window.dispatch_action(ToggleFileExplorer.boxed_clone(), cx);
+                            }
                         },
                     ))
                     .on_action(cx.listener(
