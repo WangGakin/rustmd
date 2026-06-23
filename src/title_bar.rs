@@ -2,6 +2,8 @@ use gpui::{Action, App, MouseButton, div, prelude::*, px, rems};
 #[cfg(windows)]
 use gpui::{ElementId, Fill};
 #[cfg(windows)]
+use raw_window_handle::RawWindowHandle;
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 #[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
