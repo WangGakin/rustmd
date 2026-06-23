@@ -1,6 +1,6 @@
-use gpui::{Action, App, ElementId, Fill, MouseButton, div, prelude::*, px, rems};
+use gpui::{Action, App, MouseButton, div, prelude::*, px, rems};
 #[cfg(windows)]
-use raw_window_handle::RawWindowHandle;
+use gpui::{ElementId, Fill};
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 #[cfg(windows)]
@@ -24,6 +24,7 @@ pub struct FileInfo {
     pub recent_files: Vec<String>,
 }
 
+#[cfg(windows)]
 fn traffic_light(
     id: impl Into<ElementId>,
     bg: impl Into<Fill>,
