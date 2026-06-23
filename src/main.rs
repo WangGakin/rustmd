@@ -85,6 +85,9 @@ fn main() {
                 titlebar: Some(TitlebarOptions {
                     title: None,
                     appears_transparent: true,
+                    #[cfg(target_os = "macos")]
+                    traffic_light_position: Some(point(px(8.0), px(8.0))),
+                    #[cfg(not(target_os = "macos"))]
                     traffic_light_position: None,
                 }),
                 ..Default::default()
@@ -153,6 +156,9 @@ fn open_new_window(cx: &mut App) {
             titlebar: Some(TitlebarOptions {
                 title: None,
                 appears_transparent: true,
+                #[cfg(target_os = "macos")]
+                traffic_light_position: Some(point(px(8.0), px(8.0))),
+                #[cfg(not(target_os = "macos"))]
                 traffic_light_position: None,
             }),
             ..Default::default()
@@ -216,6 +222,9 @@ fn open_new_window_with_file(path: PathBuf, cx: &mut App) {
             titlebar: Some(TitlebarOptions {
                 title: None,
                 appears_transparent: true,
+                #[cfg(target_os = "macos")]
+                traffic_light_position: Some(point(px(8.0), px(8.0))),
+                #[cfg(not(target_os = "macos"))]
                 traffic_light_position: None,
             }),
             ..Default::default()

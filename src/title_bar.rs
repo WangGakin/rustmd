@@ -10,6 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, HTCAPTION, WM_NCLBUT
 
 use crate::editor::EditorTheme;
 use crate::menu;
+#[cfg(windows)]
 use crate::window::{CloseWindow, MinimizeWindow, ZoomWindow};
 use crate::file_explorer::ToggleFileExplorer;
 
@@ -61,11 +62,16 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
 
     let has_recent = !file_info.recent_files.is_empty();
 
-    div()
+    let title_bar = div()
         .id("title-bar")
         .w_full()
         .py(rems(0.5))
-        .px(rems(1.0))
+        .px(rems(1.0));
+
+    #[cfg(target_os = "macos")]
+    let title_bar = title_bar.pl(px(74.0));
+
+    title_bar
         .border_color(theme.selection)
         .border_b_1()
         .flex()
@@ -87,7 +93,7 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                         .relative()
                         .on_mouse_down(MouseButton::Left, |_e, window, _cx| {
                             #[cfg(not(windows))]
-                            let _ = window;
+                            window.start_window_move();
                             #[cfg(windows)]
                             if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window)
                                 && let RawWindowHandle::Win32(win32_handle) = handle.as_raw() {
@@ -156,12 +162,27 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                             window.dispatch_action(action.boxed_clone(), cx);
                         })
                 })
-                .child(traffic_light(
-                    "minimize-button",
-                    theme.orange,
-                    MinimizeWindow,
-                ))
-                .child(traffic_light("maximize-button", theme.green, ZoomWindow))
-                .child(traffic_light("quit-button", theme.red, CloseWindow)),
+                .child({
+                    #[cfg(windows)]
+                    { traffic_light(
+                        "minimize-button",
+                        theme.orange,
+                        MinimizeWindow,
+                    ) }
+                    #[cfg(not(windows))]
+                    { div() }
+                })
+                .child({
+                    #[cfg(windows)]
+                    { traffic_light("maximize-button", theme.green, ZoomWindow) }
+                    #[cfg(not(windows))]
+                    { div() }
+                })
+                .child({
+                    #[cfg(windows)]
+                    { traffic_light("quit-button", theme.red, CloseWindow) }
+                    #[cfg(not(windows))]
+                    { div() }
+                }),
         )
 }
