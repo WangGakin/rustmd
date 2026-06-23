@@ -105,9 +105,9 @@ pub fn toolbar(theme: &EditorTheme, cx: &mut App) -> impl IntoElement {
             })
             .on_hover({
                 let tip = tooltip.clone();
-                move |hovered, _window, cx| {
+                move |hovered, window, cx| {
                     if *hovered {
-                        Tooltip::show(&tip, cx);
+                        Tooltip::show(&tip, Some(window.mouse_position()), cx);
                     } else {
                         Tooltip::hide(cx);
                     }

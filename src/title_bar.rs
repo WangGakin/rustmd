@@ -121,6 +121,8 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                                 .right_0()
                                 .top_0()
                                 .bottom_0()
+                                .flex()
+                                .items_center()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
                                 .child(title),
@@ -155,10 +157,10 @@ pub fn title_bar(theme: &EditorTheme, file_info: &FileInfo, cx: &mut App) -> imp
                         .id("recent-files-btn")
                         .px(px(6.0))
                         .py(px(3.0))
-                        .text_color(if has_recent { theme.foreground } else { theme.comment })
                         .rounded(px(3.0))
+                        .hover(|s| s.bg(theme.selection))
                         .when(has_recent, |this| {
-                            this.cursor_pointer().hover(|s| s.bg(theme.selection))
+                            this.cursor_pointer()
                         })
                         .child("\u{1F552}")
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {

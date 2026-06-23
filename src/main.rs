@@ -46,7 +46,7 @@ fn main() {
 
         cx.set_global(config);
         cx.set_global(KeyMode::default());
-        cx.set_global(Tooltip { text: None });
+        cx.set_global(Tooltip { text: None, position: None });
 
         cx.bind_keys([
             KeyBinding::new("ctrl-o", OpenFile, None),
@@ -580,20 +580,26 @@ impl Render for RootView {
                             .child(EditorImeElement::new(self.editor.clone())),
                     )
                     .child(status_bar(&status_info, &theme, &config))
-                    .when_some(tooltip.text.clone(), |parent, text| {
-                        parent.child(
-                            div()
-                                .absolute()
-                                .top(rems(0.25))
-                                .left(px(0.0))
-                                .px(rems(0.5))
-                                .py(rems(0.15))
-                                .text_xs()
-                                .text_color(theme.background)
-                                .bg(theme.foreground)
-                                .rounded(px(4.0))
-                                .child(text),
-                        )
+                    .when_some(tooltip.text.clone(), {
+                        let tip_pos = tooltip.position;
+                        move |parent, text| {
+                            let (left, top) = tip_pos
+                                .map(|p| (p.x + px(8.0), p.y + px(20.0)))
+                                .unwrap_or((px(0.0), px(4.0)));
+                            parent.child(
+                                div()
+                                    .absolute()
+                                    .top(top)
+                                    .left(left)
+                                    .px(rems(0.5))
+                                    .py(rems(0.15))
+                                    .text_xs()
+                                    .text_color(theme.background)
+                                    .bg(theme.foreground)
+                                    .rounded(px(4.0))
+                                    .child(text),
+                            )
+                        }
                     })
                     .when(self.about_open, |parent| {
                         parent
