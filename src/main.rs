@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use gpui::*;
 use gpui::prelude::FluentBuilder;
+#[cfg(windows)]
 use raw_window_handle::RawWindowHandle;
 use rustmd::config::Config;
 use rustmd::editor::ime::EditorImeElement;
