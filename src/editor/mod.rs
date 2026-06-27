@@ -1,5 +1,6 @@
 mod action;
 mod config;
+mod column_memory;
 pub mod ime;
 pub mod theme;
 
@@ -7,6 +8,7 @@ pub use action::{
     CenterLine, Direction, DispatchEditorAction, EditorAction, FindNext, FindPrevious, ReplaceAll,
     ReplaceNext, ToggleFind,
 };
+pub use column_memory::ColumnMemory;
 pub use config::EditorConfig;
 pub use theme::EditorTheme;
 
@@ -22,9 +24,9 @@ use std::sync::mpsc;
 static NEXT_EDITOR_ID: AtomicUsize = AtomicUsize::new(0);
 
 use gpui::{
-    AnyWindowHandle, Context, Empty, FocusHandle, Font, IntoElement, KeyDownEvent, ListAlignment,
-    ListState, ModifiersChangedEvent, Pixels, ReadGlobal, Render, SharedString, TextRun, Window,
-    font, px, prelude::*,
+    AnyWindowHandle, Context, Empty, FocusHandle, Font, IntoElement, KeyDownEvent, LineFragment,
+    ListAlignment, ListState, ModifiersChangedEvent, Pixels, ReadGlobal, Render, SharedString,
+    TextRun, Window, font, px, prelude::*,
 };
 
 /// Marker type for text selection drag operations.
@@ -134,10 +136,9 @@ pub struct Editor {
     cached_scrollbar: Option<(u64, usize, f32, f32)>,
     /// Cached visible line range: (buffer_version, scroll_top_item_ix, first_visible, last_visible).
     cached_visible_range: Option<(u64, usize, usize, usize)>,
-    /// Preferred visual X position for vertical cursor movement (column memory).
-    /// Set on the first vertical move after a reset, preserved across short/blank lines.
-    /// Reset by horizontal movements, mouse clicks, and text edits.
-    preferred_column: Option<Pixels>,
+    /// Tracks the preferred visual X position for vertical cursor movement.
+    /// Wraps column memory with a clear API.
+    pub column_memory: ColumnMemory,
 }
 
 impl Editor {
@@ -194,7 +195,7 @@ impl Editor {
             cached_nested_context: None,
             cached_scrollbar: None,
             cached_visible_range: None,
-            preferred_column: None,
+            column_memory: ColumnMemory::new(),
         }
     }
 
@@ -421,23 +422,23 @@ impl Editor {
     }
 
     fn tab(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.tab();
     }
 
     fn shift_tab(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.shift_tab();
     }
 
     fn toggle_checkbox(&mut self, line_number: usize, cx: &mut Context<Self>) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.toggle_checkbox_state(line_number);
         cx.notify();
     }
 
     fn insert_text(&mut self, text: &str) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.insert_text(text);
     }
 
@@ -602,17 +603,17 @@ impl Editor {
     }
 
     fn delete_backward(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.delete_backward();
     }
 
     fn delete_forward(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.delete_forward();
     }
 
     fn delete_to_line_end(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         let cursor_pos = self.cursor().offset;
         let line_end = self.cursor().move_to_line_end(&self.state.buffer).offset;
         if cursor_pos < line_end {
@@ -621,19 +622,19 @@ impl Editor {
     }
 
     fn enter(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.enter();
         self.scroll_to_cursor_pending = true;
     }
 
     fn shift_enter(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.shift_enter();
         self.scroll_to_cursor_pending = true;
     }
 
     fn shift_alt_enter(&mut self) {
-        self.preferred_column = None;
+        self.column_memory.clear();
         self.state.shift_alt_enter();
         self.scroll_to_cursor_pending = true;
     }
@@ -650,7 +651,11 @@ impl Editor {
         self.scroll_to_cursor_pending = true;
     }
 
-    fn move_in_direction_visual(
+    /// Unified vertical cursor movement with visual column memory.
+    /// - Within same logical line: moves between visual rows, preserving pixel column.
+    /// - Across logical lines: shapes the target line, maps target pixel x to byte offset.
+    /// - Blank/short lines: cursor at line start, column memory preserved for snap-back.
+    fn move_vertically(
         &mut self,
         direction: Direction,
         extend: bool,
@@ -661,35 +666,33 @@ impl Editor {
             return;
         };
 
+        // ── Gather current cursor and line info ──
         let cursor_offset = self.state.cursor().offset;
         let current_line_idx = self.state.buffer.byte_to_line(cursor_offset);
         let line_range = self.state.buffer.line_byte_range(current_line_idx);
         let line_text = self.state.buffer.slice_cow(line_range.clone()).into_owned();
         let cursor_in_line = cursor_offset - line_range.start;
 
+        // ── Compute rendering parameters ──
         let rem_size = window.rem_size();
         let viewport_width = self.list_state.viewport_bounds().size.width;
         let max_width = self.config.max_line_width.unwrap_or(viewport_width);
         let padding_x = self.config.padding_x.to_pixels(rem_size);
         let available_width = (max_width.min(viewport_width) - padding_x * 2.0).max(px(1.0));
-
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(rem_size);
         let line_font = font(&self.config.text_font);
 
+        // ── Find current visual row ──
         let wrap_offsets = Self::compute_wrap_offsets(
-            &line_text,
-            available_width,
-            &line_font,
-            font_size,
-            window,
+            &line_text, available_width, &line_font, font_size, window,
         );
-
-        let visual_row = wrap_offsets
+        let current_visual_row = wrap_offsets
             .iter()
             .position(|&o| o > cursor_in_line)
             .unwrap_or(wrap_offsets.len());
 
+        // ── Shape current line, compute within-row pixel x ──
         let run = TextRun {
             len: line_text.len(),
             font: line_font.clone(),
@@ -698,97 +701,38 @@ impl Editor {
             underline: None,
             strikethrough: None,
         };
-        let shared: SharedString = line_text.into();
+        let shared = SharedString::from(line_text);
         let shaped = window
             .text_system()
             .shape_line(shared.clone(), font_size, &[run], None);
-
-        let current_row_start_byte = if visual_row == 0 {
+        let current_row_start_byte = if current_visual_row == 0 {
             0
         } else {
-            wrap_offsets[visual_row - 1]
+            wrap_offsets[current_visual_row - 1]
         };
-        let row_start_x = shaped.x_for_index(current_row_start_byte);
-        let relative_x = if cursor_in_line >= current_row_start_byte {
-            shaped.x_for_index(cursor_in_line) - row_start_x
+        let current_row_start_x = shaped.x_for_index(current_row_start_byte);
+        let within_row_x = if cursor_in_line >= current_row_start_byte {
+            shaped.x_for_index(cursor_in_line) - current_row_start_x
         } else {
             px(0.0)
         };
-        // Column memory: remember the preferred visual x across short/blank lines
-        let target_x = self.preferred_column.unwrap_or(relative_x);
-        self.preferred_column = Some(target_x);
+        let target_x = self.column_memory.target_x(within_row_x);
+        self.column_memory.record(target_x);
 
-        let line_text = shared; // reuse for length
-        let line_len = line_text.len();
-
-        // Helper: on a given shaped line, find the byte offset at visual x
-        // within [row_start..row_end).
-        let offset_at_x = |shaped: &gpui::ShapedLine,
-                           row_start: usize,
-                           row_end: usize,
-                           x: Pixels|
-         -> usize {
-            let target_x = shaped.x_for_index(row_start) + x;
-            shaped
-                .index_for_x(target_x)
-                .unwrap_or(row_start)
-                .min(row_end)
-                .max(row_start)
-        };
-
-        let new_cursor_opt = if direction == Direction::Down {
-            if visual_row < wrap_offsets.len() {
-                let row_start = wrap_offsets[visual_row];
-                let row_end = if visual_row + 1 < wrap_offsets.len() {
-                    wrap_offsets[visual_row + 1]
-                } else {
-                    line_len
-                };
-                let idx = offset_at_x(&shaped, row_start, row_end, target_x);
-                Some(Cursor {
-                    offset: line_range.start + idx,
-                })
-            } else {
-                // Last visual row â€” cross into next buffer line
-                let target_line = current_line_idx + 1;
-                if target_line >= self.state.buffer.line_count() {
-                    None
-                } else {
-                    self.visual_cross_line(
-                        target_line,
-                        target_x,
-                        &line_font,
-                        font_size,
-                        window,
-                    )
-                }
-            }
-        } else if visual_row > 0 {
-            let prev_row_start = if visual_row == 1 {
-                0
-            } else {
-                wrap_offsets[visual_row - 2]
-            };
-            let row_end = wrap_offsets[visual_row - 1];
-            let idx = offset_at_x(&shaped, prev_row_start, row_end, target_x);
-            Some(Cursor {
-                offset: line_range.start + idx,
-            })
-        } else {
-            // First visual row â€” cross into previous buffer line
-            if current_line_idx == 0 {
-                None
-            } else {
-                let target_line = current_line_idx - 1;
-                self.visual_cross_line(
-                    target_line,
-                    target_x,
-                    &line_font,
-                    font_size,
-                    window,
-                )
-            }
-        };
+        // ── Move cursor to the target visual position ──
+        let new_cursor_opt = self.move_vertically_to_target(
+            direction.clone(),
+            current_line_idx,
+            current_visual_row,
+            &wrap_offsets,
+            target_x,
+            &shaped,
+            shared.as_ref(),
+            &line_font,
+            font_size,
+            available_width,
+            window,
+        );
 
         match new_cursor_opt {
             Some(new_cursor) => {
@@ -796,17 +740,108 @@ impl Editor {
                 self.scroll_to_cursor_pending = true;
             }
             None => {
+                // Document boundary — fall back to raw byte-offset movement
                 self.move_in_direction(direction, extend);
             }
         }
     }
 
-    fn visual_cross_line(
+    /// Resolve the target cursor position for a vertical move.
+    /// Returns the new Cursor, or None at document boundaries.
+    fn move_vertically_to_target(
         &mut self,
-        target_line_idx: usize,
-        visual_x: Pixels,
+        direction: Direction,
+        current_line_idx: usize,
+        current_visual_row: usize,
+        wrap_offsets: &[usize],
+        target_x: Pixels,
+        source_shaped: &gpui::ShapedLine,
+        source_text: &str,
         font: &Font,
         font_size: Pixels,
+        available_width: Pixels,
+        window: &mut Window,
+    ) -> Option<Cursor> {
+        let line_range = self.state.buffer.line_byte_range(current_line_idx);
+        let source_len = source_text.len();
+
+        let target_line_idx = match direction {
+            Direction::Down => {
+                if current_visual_row < wrap_offsets.len() {
+                    // Next visual row within the same logical line
+                    let row_start = wrap_offsets[current_visual_row];
+                    let row_end = wrap_offsets
+                        .get(current_visual_row + 1)
+                        .copied()
+                        .unwrap_or(source_len);
+                    let idx = Self::offset_at_row_x(
+                        source_shaped, source_text, row_start, row_end, target_x,
+                    );
+                    let was_clamped = target_x + source_shaped.x_for_index(row_start)
+                        > Self::row_right_x(source_shaped, source_text, row_end)
+                        && row_end < source_len;
+                    let new_within = source_shaped.x_for_index(idx)
+                        - source_shaped.x_for_index(row_start);
+                    self.column_memory.record_if_not_clamped(new_within, was_clamped);
+                    return Some(Cursor { offset: line_range.start + idx });
+                }
+                // Cross into next logical line, first visual row
+                let target = current_line_idx + 1;
+                if target >= self.state.buffer.line_count() {
+                    return None;
+                }
+                target
+            }
+            Direction::Up => {
+                if current_visual_row > 0 {
+                    // Previous visual row within the same logical line
+                    let prev_row_start = if current_visual_row == 1 {
+                        0
+                    } else {
+                        wrap_offsets[current_visual_row - 2]
+                    };
+                    let row_end = wrap_offsets[current_visual_row - 1];
+                    let idx = Self::offset_at_row_x(
+                        source_shaped, source_text, prev_row_start, row_end, target_x,
+                    );
+                    let was_clamped = target_x + source_shaped.x_for_index(prev_row_start)
+                        > Self::row_right_x(source_shaped, source_text, row_end)
+                        && row_end < source_len;
+                    let new_within = source_shaped.x_for_index(idx)
+                        - source_shaped.x_for_index(prev_row_start);
+                    self.column_memory.record_if_not_clamped(new_within, was_clamped);
+                    return Some(Cursor { offset: line_range.start + idx });
+                }
+                // Cross into previous logical line, last visual row
+                if current_line_idx == 0 {
+                    return None;
+                }
+                current_line_idx - 1
+            }
+            _ => return None,
+        };
+
+        // ── Cross logical lines ──
+        self.resolve_cross_line_cursor(
+            target_line_idx,
+            target_x,
+            direction,
+            font,
+            font_size,
+            available_width,
+            window,
+        )
+    }
+
+    /// Find cursor position on a different logical line, shaping it fresh.
+    fn resolve_cross_line_cursor(
+        &mut self,
+        target_line_idx: usize,
+        target_x: Pixels,
+        direction: Direction,
+        font: &Font,
+        font_size: Pixels,
+        available_width: Pixels,
         window: &mut Window,
     ) -> Option<Cursor> {
         let target_range = self.state.buffer.line_byte_range(target_line_idx);
@@ -815,7 +850,11 @@ impl Editor {
             .buffer
             .slice_cow(target_range.clone())
             .into_owned();
-        if target_text.is_empty() {
+
+        // Blank or whitespace-only line: cursor at line start.
+        // Column memory is intentionally NOT updated — the caller already
+        // recorded the source line's within-row x, preserving column memory.
+        if target_text.is_empty() || target_text.chars().all(|c| c.is_whitespace()) {
             return Some(Cursor {
                 offset: target_range.start,
             });
@@ -829,22 +868,90 @@ impl Editor {
             underline: None,
             strikethrough: None,
         };
-        let shared: SharedString = target_text.into();
+        let shared = SharedString::from(target_text);
         let shaped = window
             .text_system()
             .shape_line(shared.clone(), font_size, &[run], None);
+        let target_len = shared.len();
 
-        let line_len = shared.len();
-        let target_x = shaped.x_for_index(0) + visual_x;
-        let idx = shaped
-            .index_for_x(target_x)
-            .unwrap_or(line_len)
-            .min(line_len);
+        let target_wrap_offsets = Self::compute_wrap_offsets(
+            shared.as_ref(),
+            available_width,
+            font,
+            font_size,
+            window,
+        );
+
+        // Down → first visual row; Up → last visual row.
+        let (row_start, row_end) = match direction {
+            Direction::Down => {
+                let end = target_wrap_offsets.first().copied().unwrap_or(target_len);
+                (0, end)
+            }
+            Direction::Up => {
+                let start = target_wrap_offsets.last().copied().unwrap_or(0);
+                (start, target_len)
+            }
+            _ => (0, target_len),
+        };
+
+        let idx = Self::offset_at_row_x(&shaped, shared.as_ref(), row_start, row_end, target_x);
+        let row_right = Self::row_right_x(&shaped, shared.as_ref(), row_end);
+        let target_abs_x = shaped.x_for_index(row_start) + target_x;
+        let was_clamped = target_abs_x > row_right && row_end < target_len;
+
+        let actual_x = shaped.x_for_index(idx) - shaped.x_for_index(row_start);
+        self.column_memory
+            .record_if_not_clamped(actual_x, was_clamped);
+
         Some(Cursor {
             offset: target_range.start + idx,
         })
     }
 
+    /// Map a within-row pixel x to a byte offset within [row_start, row_end).
+    fn offset_at_row_x(
+        shaped: &gpui::ShapedLine,
+        text: &str,
+        row_start: usize,
+        row_end: usize,
+        target_x: Pixels,
+    ) -> usize {
+        if row_start >= row_end {
+            return row_start;
+        }
+        let row_start_x = shaped.x_for_index(row_start);
+        let row_end_x = Self::row_right_x(shaped, text, row_end);
+        let target_abs_x = row_start_x + target_x;
+        let mut clamped_x = target_abs_x.clamp(row_start_x, row_end_x);
+        if row_end < text.len() && clamped_x >= row_end_x && row_end > row_start {
+            clamped_x = (row_end_x - px(1.0)).max(row_start_x);
+        }
+        let idx = shaped.index_for_x(clamped_x).unwrap_or(row_end);
+        let idx = idx.min(row_end);
+        if idx >= row_end && row_end > row_start && row_end < text.len() {
+            let mut p = row_end.saturating_sub(1);
+            while p > row_start && !text.is_char_boundary(p) {
+                p -= 1;
+            }
+            p.max(row_start)
+        } else {
+            idx.max(row_start)
+        }
+    }
+
+    /// Right pixel boundary of a visual row.
+    fn row_right_x(shaped: &gpui::ShapedLine, text: &str, row_end: usize) -> Pixels {
+        if row_end < text.len() {
+            shaped.x_for_index(row_end)
+        } else {
+            shaped.width
+        }
+    }
+
+    /// Compute the byte offsets where a line wraps into visual rows.
+    /// Uses GPUI's `LineWrapper` which performs word-boundary-aware wrapping,
+    /// matching the actual rendered text layout exactly.
     fn compute_wrap_offsets(
         text: &str,
         available_width: Pixels,
@@ -856,60 +963,14 @@ impl Editor {
             return Vec::new();
         }
 
-        let shared: SharedString = text.to_string().into();
-        let run = TextRun {
-            len: shared.len(),
-            font: font.clone(),
-            color: gpui::transparent_black(),
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        let shaped = window
+        let mut wrapper = window
             .text_system()
-            .shape_line(shared.clone(), font_size, &[run], None);
+            .line_wrapper(font.clone(), font_size);
 
-        if shaped.width <= available_width {
-            return Vec::new();
-        }
-
-        let text_len = shared.len();
-        let mut offsets = Vec::new();
-        let mut current_row_start = 0;
-
-        while current_row_start < text_len {
-            let start_x = shaped.x_for_index(current_row_start);
-            let end_x = start_x + available_width;
-
-            if end_x >= shaped.width {
-                break;
-            }
-
-            let Some(idx) = shaped.index_for_x(end_x) else { break };
-            let wrap_idx = if idx <= current_row_start {
-                // Can't fit even one more char; advance minimally past char boundary
-                let mut w = current_row_start + 1;
-                while w < text_len && !shared.is_char_boundary(w) {
-                    w += 1;
-                }
-                w
-            } else {
-                let mut w = idx;
-                while w < text_len && !shared.is_char_boundary(w) {
-                    w += 1;
-                }
-                w
-            };
-
-            if wrap_idx >= text_len || wrap_idx <= current_row_start {
-                break;
-            }
-
-            current_row_start = wrap_idx;
-            offsets.push(current_row_start);
-        }
-
-        offsets
+        wrapper
+            .wrap_line(&[LineFragment::text(text)], available_width)
+            .map(|boundary| boundary.ix)
+            .collect()
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -1003,24 +1064,24 @@ impl Editor {
                     return;
                 }
                 "b" => {
-                    self.preferred_column = None;
+                    self.column_memory.clear();
                     self.move_in_direction(Direction::Left, extend);
                     cx.notify();
                     return;
                 }
                 "f" => {
-                    self.preferred_column = None;
+                    self.column_memory.clear();
                     self.move_in_direction(Direction::Right, extend);
                     cx.notify();
                     return;
                 }
                 "p" => {
-                    self.move_in_direction_visual(Direction::Up, extend, window);
+                    self.move_vertically(Direction::Up, extend, window);
                     cx.notify();
                     return;
                 }
                 "n" => {
-                    self.move_in_direction_visual(Direction::Down, extend, window);
+                    self.move_vertically(Direction::Down, extend, window);
                     cx.notify();
                     return;
                 }
@@ -1051,21 +1112,21 @@ impl Editor {
                 self.delete_forward();
             }
             "left" => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 self.move_in_direction(Direction::Left, extend);
             }
             "right" => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 self.move_in_direction(Direction::Right, extend);
             }
             "up" => {
-                self.move_in_direction_visual(Direction::Up, extend, window);
+                self.move_vertically(Direction::Up, extend, window);
             }
             "down" => {
-                self.move_in_direction_visual(Direction::Down, extend, window);
+                self.move_vertically(Direction::Down, extend, window);
             }
             "home" => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 let new_cursor = if keystroke.modifiers.control || keystroke.modifiers.platform {
                     self.cursor().move_to_start()
                 } else {
@@ -1075,7 +1136,7 @@ impl Editor {
                 self.scroll_to_cursor_pending = true;
             }
             "end" => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 let new_cursor = if keystroke.modifiers.control || keystroke.modifiers.platform {
                     self.cursor().move_to_end(&self.state.buffer)
                 } else {
@@ -1094,7 +1155,7 @@ impl Editor {
                 }
             }
             "space" => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 if !self.state.try_insert_space() {
                     return;
                 }
@@ -1111,7 +1172,7 @@ impl Editor {
             "a" if (keystroke.modifiers.control || keystroke.modifiers.platform)
                 && (!is_mac_mode || is_ctrl_shift) =>
             {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 self.state.selection = Selection::select_all(&self.state.buffer);
             }
             "c" if keystroke.modifiers.control || keystroke.modifiers.platform => {
@@ -1140,7 +1201,7 @@ impl Editor {
                 }
             }
             "z" if keystroke.modifiers.control || keystroke.modifiers.platform => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 if keystroke.modifiers.shift {
                     if let Some(cursor_pos) = self.state.buffer.redo() {
                         self.state.selection = Selection::new(cursor_pos, cursor_pos);
@@ -1150,7 +1211,7 @@ impl Editor {
                 }
             }
             "y" if keystroke.modifiers.control => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 if let Some(cursor_pos) = self.state.buffer.redo() {
                     self.state.selection = Selection::new(cursor_pos, cursor_pos);
                 }
@@ -1374,7 +1435,7 @@ impl Editor {
                 self.delete_backward();
             }
             EditorAction::Move(direction) => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 self.move_in_direction(direction.clone(), false);
             }
             EditorAction::Click {
@@ -1382,11 +1443,11 @@ impl Editor {
                 shift,
                 click_count,
             } => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 self.state.handle_click(*offset, *shift, *click_count);
             }
             EditorAction::Drag { offset } => {
-                self.preferred_column = None;
+                self.column_memory.clear();
                 if !self.in_drag_scroll_zone {
                     self.state.handle_drag(*offset);
                     self.is_selecting = true;

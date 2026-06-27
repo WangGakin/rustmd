@@ -163,6 +163,60 @@ fn snap_to_char_boundary(text: &str, index: usize) -> usize {
     idx
 }
 
+fn next_char_boundary(text: &str, index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    let mut next = index + 1;
+    while next < text.len() && !text.is_char_boundary(next) {
+        next += 1;
+    }
+    next
+}
+
+fn snap_to_closest_char_boundary(
+    text_layout: &gpui::TextLayout,
+    display_text: &str,
+    raw_index: usize,
+    click_x: Pixels,
+    font: &Font,
+    font_size: Pixels,
+    window: &Window,
+) -> usize {
+    let char_start = snap_to_char_boundary(display_text, raw_index);
+    let char_end = next_char_boundary(display_text, char_start);
+
+    if char_start == char_end {
+        return char_start;
+    }
+
+    let Some(start_pos) = text_layout.position_for_index(char_start) else {
+        return char_start;
+    };
+
+    let char_str = display_text[char_start..char_end].to_string();
+    let run = TextRun {
+        len: char_str.len(),
+        font: font.clone(),
+        color: gpui::transparent_black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let shaped =
+        window
+            .text_system()
+            .shape_line(SharedString::from(char_str), font_size, &[run], None);
+    let char_width = shaped.width;
+    let midpoint_x = start_pos.x + char_width / 2.0;
+
+    if click_x > midpoint_x {
+        char_end
+    } else {
+        char_start
+    }
+}
+
 #[derive(Clone)]
 pub struct LineTheme {
     pub text_color: Rgba,
@@ -1509,6 +1563,7 @@ impl RenderOnce for Line {
                             .child(styled_text)
                             .child(hr_line);
 
+                        let text_font_hr = self.theme.text_font.clone();
                         hr_div = hr_div.on_mouse_down(
                             MouseButton::Left,
                             move |event: &MouseDownEvent, window, cx| {
@@ -1520,8 +1575,15 @@ impl RenderOnce for Line {
                                         Ok(idx) => idx,
                                         Err(idx) => idx,
                                     };
-                                let visual_index =
-                                    snap_to_char_boundary(shared_text_hr.as_ref(), raw_index);
+                                let visual_index = snap_to_closest_char_boundary(
+                                    &text_layout,
+                                    shared_text_hr.as_ref(),
+                                    raw_index,
+                                    event.position.x,
+                                    &text_font_hr,
+                                    window.rem_size(),
+                                    window,
+                                );
                                 let buffer_offset = line_range.start + visual_index;
                                 let buffer_offset = buffer_offset.min(line_range.end);
                                 window.dispatch_action(
@@ -1776,8 +1838,15 @@ impl RenderOnce for Line {
                         Ok(idx) => idx,
                         Err(idx) => idx,
                     };
-                    let visual_index =
-                        snap_to_char_boundary(display_text_for_click.as_ref(), raw_index);
+                    let visual_index = snap_to_closest_char_boundary(
+                        &layout_for_click,
+                        display_text_for_click.as_ref(),
+                        raw_index,
+                        event.position.x,
+                        &text_font_for_click,
+                        window.rem_size(),
+                        window,
+                    );
 
                     if let Some(ref range) = checkbox_click_range
                         && visual_index >= range.start
@@ -1885,8 +1954,15 @@ impl RenderOnce for Line {
                             Ok(idx) => idx,
                             Err(idx) => idx,
                         };
-                        let visual_index =
-                            snap_to_char_boundary(display_text_for_move.as_ref(), raw_index);
+                        let visual_index = snap_to_closest_char_boundary(
+                            &layout_for_move,
+                            display_text_for_move.as_ref(),
+                            raw_index,
+                            event.position.x,
+                            &text_font_for_move,
+                            window.rem_size(),
+                            window,
+                        );
 
                         let content_visual_index = visual_index.saturating_sub(prefix_len);
 

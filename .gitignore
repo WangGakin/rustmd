@@ -1,4 +1,5 @@
 /target
+/vendor
 *.log
 *.wasmmap
 reasonix.toml
